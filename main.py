@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -16,6 +16,8 @@ SHOPIFY_SHOP_DOMAIN = os.getenv("SHOPIFY_SHOP_DOMAIN", "your-store.myshopify.com
 SHOPIFY_ADMIN_API_TOKEN = os.getenv("SHOPIFY_ADMIN_API_TOKEN", "")
 SHOPIFY_STOREFRONT_ACCESS_TOKEN = os.getenv("SHOPIFY_STOREFRONT_ACCESS_TOKEN", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+SHOPIFY_CLIENT_ID = os.getenv("SHOPIFY_CLIENT_ID", "")
+SHOPIFY_CLIENT_SECRET = os.getenv("SHOPIFY_CLIENT_SECRET", "")
 
 app = FastAPI(title="REZON AI VTON Engine", version="1.0.0")
 
@@ -37,6 +39,45 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+# ==================== SHOPIFY OAUTH CALLBACK ====================
+
+@app.get("/auth/callback")
+async def shopify_callback(request: Request):
+    code = request.query_params.get("code")
+    shop = request.query_params.get("shop")
+    
+    if not code or not shop:
+        return {"error": "Missing code or shop"}
+    
+    # Token exchange with Shopify
+    token_url = f"https://{shop}/admin/oauth/access_token"
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            token_url,
+            json={
+                "client_id": SHOPIFY_CLIENT_ID,
+                "client_secret": SHOPIFY_CLIENT_SECRET,
+                "code": code
+            }
+        )
+        data = response.json()
+    
+    # 🔑🔑🔑 TOKEN YAHAN PRINT HOGA
+    access_token = data.get("access_token")
+    print("=" * 60)
+    print("🔑 SHOPIFY ACCESS TOKEN:", access_token)
+    print("🔑 SHOPIFY ACCESS TOKEN:", access_token)
+    print("🔑 SHOPIFY ACCESS TOKEN:", access_token)
+    print("=" * 60)
+    
+    return {
+        "success": True,
+        "token": access_token,
+        "shop": shop,
+        "message": "Token captured! Copy this token to Railway variables."
+    }
 
 # ==================== MODELS ====================
 
