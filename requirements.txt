@@ -1,35 +1,18 @@
 # FastAPI & Server
-fastapi==0.111.0
-uvicorn[standard]==0.30.0
-python-multipart==0.0.9
-python-dotenv==1.0.1
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.20
+python-dotenv>=1.0.1
 
 # HTTP Client
-httpx==0.27.0
-requests==2.32.0
+httpx>=0.28.0
+requests>=2.32.3
 
 # AI / ML
-openai==1.35.0
-# torch==2.3.1
-# torchvision==0.18.1
-# diffusers==0.29.0
-# controlnet-aux==0.0.9
-# transformers==4.41.0
-# accelerate==0.31.0
+openai>=1.60.0
 
 # Image Processing
-Pillow
-# opencv-python==4.10.0.84
-# numpy==1.26.4
+Pillow>=11.0.0
 
 # Data Validation
-pydantic==2.7.4
-
-# Cloud Storage (Optional)
-# cloudinary==1.40.0
-# boto3==1.34.0
-
-# Database (Optional)
-# sqlalchemy==2.0.30
-# asyncpg==0.29.0
-# aiosqlite==0.20.0
+pydantic>=2.10.0
