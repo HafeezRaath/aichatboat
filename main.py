@@ -1,9 +1,8 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Request
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
-import requests
 import json
 import os
 import base64
@@ -11,7 +10,7 @@ import uuid
 from datetime import datetime, timedelta
 import httpx
 
-# Configuration
+# ============ CONFIGURATION ============
 SHOPIFY_SHOP_DOMAIN = os.getenv("SHOPIFY_SHOP_DOMAIN", "your-store.myshopify.com")
 SHOPIFY_ADMIN_API_TOKEN = os.getenv("SHOPIFY_ADMIN_API_TOKEN", "")
 SHOPIFY_STOREFRONT_ACCESS_TOKEN = os.getenv("SHOPIFY_STOREFRONT_ACCESS_TOKEN", "")
@@ -21,7 +20,7 @@ SHOPIFY_CLIENT_SECRET = os.getenv("SHOPIFY_CLIENT_SECRET", "")
 
 app = FastAPI(title="REZON AI VTON Engine", version="1.0.0")
 
-# CORS - Allow Shopify domain
+# ============ CORS - VERY PERMISSIVE FOR TESTING ============
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -30,8 +29,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ==================== ROOT HANDLER ====================
-
+# ============ ROOT / HEALTH ============
 @app.get("/")
 async def root():
     return {"message": "REZON AI VTON Engine Running", "version": "1.0.0", "status": "ok"}
@@ -40,19 +38,15 @@ async def root():
 async def health():
     return {"status": "healthy"}
 
-# ==================== SHOPIFY OAUTH CALLBACK ====================
-
+# ============ SHOPIFY OAUTH ============
 @app.get("/auth/callback")
 async def shopify_callback(request: Request):
     code = request.query_params.get("code")
     shop = request.query_params.get("shop")
-    
     if not code or not shop:
         return {"error": "Missing code or shop"}
-    
-    # Token exchange with Shopify
+
     token_url = f"https://{shop}/admin/oauth/access_token"
-    
     async with httpx.AsyncClient() as client:
         response = await client.post(
             token_url,
@@ -63,15 +57,12 @@ async def shopify_callback(request: Request):
             }
         )
         data = response.json()
-    
-    # 🔑🔑🔑 TOKEN YAHAN PRINT HOGA
+
     access_token = data.get("access_token")
     print("=" * 60)
-    print("🔑 SHOPIFY ACCESS TOKEN:", access_token)
-    print("🔑 SHOPIFY ACCESS TOKEN:", access_token)
-    print("🔑 SHOPIFY ACCESS TOKEN:", access_token)
+    print("SHOPIFY ACCESS TOKEN:", access_token)
     print("=" * 60)
-    
+
     return {
         "success": True,
         "token": access_token,
@@ -79,8 +70,7 @@ async def shopify_callback(request: Request):
         "message": "Token captured! Copy this token to Railway variables."
     }
 
-# ==================== MODELS ====================
-
+# ============ MODELS ============
 class ChatMessage(BaseModel):
     role: str
     content: str
@@ -91,6 +81,10 @@ class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     session_id: str
     product_context: Optional[str] = None
+
+class SimpleChatRequest(BaseModel):
+    message: str
+    session_id: Optional[str] = "default"
 
 class DiscountRequest(BaseModel):
     percentage: float = 5.0
@@ -108,8 +102,7 @@ class ProductFetchRequest(BaseModel):
     product_id: Optional[str] = None
     limit: int = 5
 
-# ==================== SHOPIFY CLIENT ====================
-
+# ============ SHOPIFY CLIENT ============
 class ShopifyClient:
     def __init__(self, shop_domain: str, admin_token: str, storefront_token: str):
         self.shop_domain = shop_domain
@@ -126,7 +119,7 @@ class ShopifyClient:
 
     async def fetch_products(self, query: str = None, limit: int = 5) -> List[Dict]:
         search_query = f"title:*{query}*" if query else ""
-        
+
         graphql_query = """
         query getProducts($query: String, $limit: Int!) {
             products(first: $limit, query: $query) {
@@ -170,9 +163,9 @@ class ShopifyClient:
             }
         }
         """
-        
+
         variables = {"query": search_query, "limit": limit}
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 self.storefront_url,
@@ -180,33 +173,34 @@ class ShopifyClient:
                 json={"query": graphql_query, "variables": variables}
             )
             data = response.json()
-            
+
         if "errors" in data:
-            raise HTTPException(status_code=400, detail=data["errors"])
-            
+            print("Shopify GraphQL errors:", data["errors"])
+            return []
+
         products = []
-        for edge in data["data"]["products"]["edges"]:
+        for edge in data.get("data", {}).get("products", {}).get("edges", []):
             node = edge["node"]
             variant = node["variants"]["edges"][0]["node"] if node["variants"]["edges"] else None
             image = node["images"]["edges"][0]["node"] if node["images"]["edges"] else None
-            
+
             products.append({
                 "id": node["id"],
                 "title": node["title"],
-                "description": node["description"],
+                "description": node.get("description", ""),
                 "handle": node["handle"],
                 "price": variant["price"]["amount"] if variant else "0.00",
-                "compare_at_price": variant["compareAtPrice"]["amount"] if variant and variant["compareAtPrice"] else None,
+                "compare_at_price": variant["compareAtPrice"]["amount"] if variant and variant.get("compareAtPrice") else None,
                 "currency": variant["price"]["currencyCode"] if variant else "PKR",
                 "image_url": image["url"] if image else "",
                 "variant_id": variant["id"] if variant else None
             })
-        
+
         return products
 
     async def create_discount_code(self, percentage: float = 5.0, prefix: str = "AI") -> Dict:
         code = f"{prefix}{uuid.uuid4().hex[:6].upper()}"
-        
+
         mutation = """
         mutation discountCodeBasicCreate($basicCodeDiscount: DiscountCodeBasicInput!) {
             discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {
@@ -232,7 +226,7 @@ class ShopifyClient:
             }
         }
         """
-        
+
         variables = {
             "basicCodeDiscount": {
                 "title": f"AI Generated {percentage}% Off",
@@ -247,7 +241,7 @@ class ShopifyClient:
                 "usageLimit": 1
             }
         }
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 self.admin_url,
@@ -255,11 +249,11 @@ class ShopifyClient:
                 json={"query": mutation, "variables": variables}
             )
             data = response.json()
-        
+
         if data.get("data", {}).get("discountCodeBasicCreate", {}).get("userErrors"):
             errors = data["data"]["discountCodeBasicCreate"]["userErrors"]
             raise HTTPException(status_code=400, detail=errors)
-        
+
         discount_node = data["data"]["discountCodeBasicCreate"]["codeDiscountNode"]
         return {
             "code": code,
@@ -283,13 +277,13 @@ class ShopifyClient:
             }
         }
         """
-        
+
         variables = {
             "input": {
                 "lines": [{"quantity": quantity, "merchandiseId": variant_id}]
             }
         }
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 self.storefront_url,
@@ -300,13 +294,12 @@ class ShopifyClient:
 
 shopify = ShopifyClient(SHOPIFY_SHOP_DOMAIN, SHOPIFY_ADMIN_API_TOKEN, SHOPIFY_STOREFRONT_ACCESS_TOKEN)
 
-# ==================== AI SERVICE ====================
-
+# ============ AI SERVICE ============
 class AIService:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.url = "https://api.openai.com/v1/chat/completions"
-    
+
     async def chat_with_products(self, messages: List[Dict], products: List[Dict] = None) -> Dict:
         system_prompt = """You are REZON AI, a premium fashion assistant for a Shopify store. 
 You help customers find products, provide styling advice, and can recommend items.
@@ -315,13 +308,20 @@ Be conversational, friendly, and use Urdu/Hinglish mix if the customer uses it.
 Always be concise but helpful."""
 
         formatted_messages = [{"role": "system", "content": system_prompt}]
-        
+
         for msg in messages:
-            content = msg.content
-            if products and msg.role == "user":
-                content += f"\\n\\nAvailable Products: {json.dumps(products)}"
-            formatted_messages.append({"role": msg.role, "content": content})
-        
+            # Handle both dict and ChatMessage object
+            if isinstance(msg, dict):
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+            else:
+                role = msg.role
+                content = msg.content
+
+            if products and role == "user":
+                content += f"\n\nAvailable Products: {json.dumps(products)}"
+            formatted_messages.append({"role": role, "content": content})
+
         functions = [
             {
                 "name": "show_product_cards",
@@ -361,64 +361,128 @@ Always be concise but helpful."""
                 }
             }
         ]
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 self.url,
                 headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
                 json={
-                    "model": "gpt-4o",
+                    "model": "gpt-4o-mini",  # Using gpt-4o-mini for cost efficiency
                     "messages": formatted_messages,
                     "functions": functions,
                     "function_call": "auto",
                     "temperature": 0.7
                 }
             )
-            
+
         result = response.json()
+
+        if "choices" not in result:
+            print("OpenAI error:", result)
+            return {"text": "Sorry, AI service temporarily unavailable. Please try again later.", "function_call": None, "product_cards": None}
+
         message = result["choices"][0]["message"]
-        
+
         response_data = {
             "text": message.get("content", ""),
             "function_call": None,
             "product_cards": None
         }
-        
+
         if message.get("function_call"):
             func_name = message["function_call"]["name"]
             func_args = json.loads(message["function_call"]["arguments"])
             response_data["function_call"] = {"name": func_name, "args": func_args}
-            
+
         return response_data
 
 ai_service = AIService(OPENAI_API_KEY)
 
-# ==================== API ROUTES ====================
+# ============ API ROUTES ============
 
-@app.post("/api/chat")
-async def chat_endpoint(request: ChatRequest):
+# ====== SIMPLE CHAT (for basic frontend integration) ======
+@app.post("/api/chat-simple")
+async def chat_simple(request: SimpleChatRequest):
+    """Simple chat endpoint that accepts just a message string"""
     try:
+        messages = [{"role": "user", "content": request.message}]
+
+        # Check if product-related keywords
+        product_keywords = ["product", "buy", "price", "dress", "shirt", "wallet", "kapra", "cheez", "suit", "clothes", "fashion"]
+        needs_products = any(kw in request.message.lower() for kw in product_keywords)
+
         products = None
-        if any(keyword in request.messages[-1].content.lower() for keyword in 
-               ["product", "buy", "price", "dress", "shirt", "wallet", "kapra", "cheez"]):
-            products = await shopify.fetch_products(limit=5)
-        
-        ai_response = await ai_service.chat_with_products(request.messages, products)
-        
+        if needs_products:
+            try:
+                products = await shopify.fetch_products(limit=5)
+            except Exception as e:
+                print("Product fetch error:", e)
+                products = []
+
+        ai_response = await ai_service.chat_with_products(messages, products)
+
         if ai_response.get("function_call", {}).get("name") == "show_product_cards":
-            product_ids = ai_response["function_call"]["args"]["product_ids"]
-            product_cards = await shopify.fetch_products(limit=len(product_ids))
-            ai_response["product_cards"] = product_cards
-            ai_response["text"] = ai_response["function_call"]["args"]["message"]
-        
+            try:
+                product_ids = ai_response["function_call"]["args"]["product_ids"]
+                product_cards = await shopify.fetch_products(limit=len(product_ids))
+                ai_response["product_cards"] = product_cards
+                ai_response["text"] = ai_response["function_call"]["args"]["message"]
+            except Exception as e:
+                print("Product card fetch error:", e)
+
         return JSONResponse(content={
             "success": True,
-            "response": ai_response["text"],
+            "response": ai_response["text"] or "Main aapki madad karne ke liye tayyar hoon!",
             "product_cards": ai_response.get("product_cards"),
             "session_id": request.session_id
         })
-        
+
     except Exception as e:
+        print("Chat error:", str(e))
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "response": "Kuch galat ho gaya. Dobara try karein.", "error": str(e)}
+        )
+
+# ====== FULL CHAT (with message history) ======
+@app.post("/api/chat")
+async def chat_endpoint(request: ChatRequest):
+    try:
+        messages_dicts = []
+        for msg in request.messages:
+            messages_dicts.append({"role": msg.role, "content": msg.content})
+
+        product_keywords = ["product", "buy", "price", "dress", "shirt", "wallet", "kapra", "cheez", "suit", "clothes", "fashion"]
+        needs_products = any(kw in request.messages[-1].content.lower() for kw in product_keywords)
+
+        products = None
+        if needs_products:
+            try:
+                products = await shopify.fetch_products(limit=5)
+            except Exception as e:
+                print("Product fetch error:", e)
+                products = []
+
+        ai_response = await ai_service.chat_with_products(messages_dicts, products)
+
+        if ai_response.get("function_call", {}).get("name") == "show_product_cards":
+            try:
+                product_ids = ai_response["function_call"]["args"]["product_ids"]
+                product_cards = await shopify.fetch_products(limit=len(product_ids))
+                ai_response["product_cards"] = product_cards
+                ai_response["text"] = ai_response["function_call"]["args"]["message"]
+            except Exception as e:
+                print("Product card error:", e)
+
+        return JSONResponse(content={
+            "success": True,
+            "response": ai_response["text"] or "Main aapki madad karne ke liye tayyar hoon!",
+            "product_cards": ai_response.get("product_cards"),
+            "session_id": request.session_id
+        })
+
+    except Exception as e:
+        print("Chat error:", str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/products")
@@ -446,7 +510,7 @@ async def process_vton(request: VTONRequest):
     return {"success": True, "status": "processing", "message": "VTON processing started"}
 
 @app.post("/api/cart/create")
-async def create_cart(variant_id: str, quantity: int = 1):
+async def create_cart_endpoint(variant_id: str, quantity: int = 1):
     try:
         cart = await shopify.create_cart(variant_id, quantity)
         return {"success": True, "cart": cart}
@@ -461,10 +525,10 @@ async def upload_image(file: UploadFile = File(...)):
         upload_dir = "uploads"
         os.makedirs(upload_dir, exist_ok=True)
         file_path = os.path.join(upload_dir, file_id)
-        
+
         with open(file_path, "wb") as f:
             f.write(contents)
-        
+
         return {
             "success": True,
             "url": f"/uploads/{file_id}",
