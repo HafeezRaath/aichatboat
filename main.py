@@ -27,7 +27,7 @@ print("  STOREFRONT_TOKEN set:", bool(SHOPIFY_STOREFRONT_ACCESS_TOKEN))
 print("  OPENAI_KEY set:", bool(OPENAI_API_KEY))
 print("=" * 60)
 
-app = FastAPI(title="REZON AI VTON Engine", version="5.0.0")
+app = FastAPI(title="REZON AI VTON Engine", version="6.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -78,7 +78,6 @@ class ShopifyClient:
             "Content-Type": "application/json",
             "X-Shopify-Storefront-Access-Token": storefront_token
         }
-        self._cached_categories = None
         self._cached_products = None
 
     def _calculate_discount(self, price_str, compare_str):
@@ -92,31 +91,31 @@ class ShopifyClient:
         return 0
 
     def _get_category_from_product(self, p):
-        """Auto-detect category from product_type and tags"""
+        """Auto-detect category from product_type, tags, title, vendor"""
         product_type = p.get("product_type", "").lower()
         tags = [t.lower() for t in p.get("tags", [])]
         title = p.get("title", "").lower()
+        vendor = p.get("vendor", "").lower()
 
-        # Watches
-        if any(k in product_type + str(tags) + title for k in ["watch", "watches", "timepiece", "wristwatch"]):
-            return "watches"
-        # Men's
-        if any(k in product_type + str(tags) + title for k in ["men", "mens", "gent", "gentleman", "male"]):
-            return "mens"
-        # Women's
-        if any(k in product_type + str(tags) + title for k in ["women", "womens", "ladies", "female", "girl"]):
+        all_text = product_type + " " + " ".join(tags) + " " + title + " " + vendor
+
+        # Women's Clothing
+        if any(k in all_text for k in ["women", "womens", "ladies", "female", "girl", "kaftan", "kurta", "shalwar", "kameez", "dress", "stitched", "unstitched", "lawn", "cotton", "fabric"]):
             return "womens"
+        # Men's Clothing
+        if any(k in all_text for k in ["men", "mens", "gent", "gentleman", "male", "boys"]):
+            return "mens"
+        # Watches
+        if any(k in all_text for k in ["watch", "watches", "timepiece", "wristwatch", "analog", "digital"]):
+            return "watches"
         # Perfumes
-        if any(k in product_type + str(tags) + title for k in ["perfume", "fragrance", "oud", "scent", "cologne"]):
+        if any(k in all_text for k in ["perfume", "fragrance", "oud", "scent", "cologne", "attar"]):
             return "perfumes"
         # Wallets/Accessories
-        if any(k in product_type + str(tags) + title for k in ["wallet", "belt", "accessory", "accessories"]):
+        if any(k in all_text for k in ["wallet", "belt", "accessory", "accessories", "bag", "handbag"]):
             return "accessories"
-        # Clothing/Fabric
-        if any(k in product_type + str(tags) + title for k in ["fabric", "suit", "kurta", "shalwar", "unstitched", "cloth"]):
-            return "clothing"
         # Gift
-        if any(k in product_type + str(tags) + title for k in ["gift", "box", "combo", "set"]):
+        if any(k in all_text for k in ["gift", "box", "combo", "set", "bundle"]):
             return "gifts"
 
         return product_type if product_type else "other"
@@ -134,6 +133,9 @@ class ShopifyClient:
 
         category = self._get_category_from_product(p)
 
+        # Get all images
+        images = [img.get("src") for img in p.get("images", []) if img.get("src")]
+
         return {
             "id": f"gid://shopify/Product/{p['id']}",
             "title": p["title"],
@@ -143,6 +145,7 @@ class ShopifyClient:
             "compare_at_price": compare,
             "currency": "PKR",
             "image_url": image.get("src") if image else None,
+            "images": images,
             "variant_id": variant_id_gid,
             "numeric_variant_id": str(variant_id_num) if variant_id_num else None,
             "category": category,
@@ -150,7 +153,8 @@ class ShopifyClient:
             "discount_percent": discount,
             "product_type": p.get("product_type", ""),
             "vendor": p.get("vendor", ""),
-            "features": p.get("tags", [])[:4]
+            "features": p.get("tags", [])[:4],
+            "available": p.get("variants", [{}])[0].get("inventory_quantity", 0) > 0 if p.get("variants") else True
         }
 
     async def fetch_all_products(self, limit=50):
@@ -180,8 +184,8 @@ class ShopifyClient:
             self._cached_products = formatted
 
             print(f"✅ Fetched {len(formatted)} REAL products from your store!")
-            for p in formatted[:3]:
-                print(f"   - {p['title']} ({p['category']}) - {p['price']} PKR")
+            for p in formatted:
+                print(f"   - {p['title']} ({p['category']}) - Rs.{p['price']} - Available: {p['available']}")
             return formatted
 
         except Exception as e:
@@ -213,14 +217,13 @@ class ShopifyClient:
                     first_img = p["image_url"]
                     break
 
-            # Category display name
+            # Category display name mapping
             display_names = {
-                "watches": "Watches",
-                "mens": "Men's Collection",
                 "womens": "Women's Collection",
+                "mens": "Men's Collection",
+                "watches": "Watches",
                 "perfumes": "Perfumes",
                 "accessories": "Accessories",
-                "clothing": "Clothing",
                 "gifts": "Gift Sets",
                 "other": "Other Products"
             }
@@ -232,8 +235,7 @@ class ShopifyClient:
                 "product_count": len(cat_products)
             })
 
-        self._cached_categories = categories
-        print(f"✅ Generated {len(categories)} categories from real products: {[c['name'] for c in categories]}")
+        print(f"✅ Generated {len(categories)} categories: {[c['name'] for c in categories]}")
         return categories
 
     async def fetch_products_by_category(self, category, limit=10):
@@ -297,19 +299,22 @@ class AIService:
 
         discount_text = ""
         if product.get("discount_percent", 0) > 0:
-            discount_text = f"\n🔥 SPECIAL OFFER: {product['discount_percent']}% OFF! Original price {product.get('compare_at_price', '')} PKR, now only {product['price']} PKR!"
+            discount_text = f"\n🔥 SPECIAL OFFER: {product['discount_percent']}% OFF! Original price Rs.{product.get('compare_at_price', '')}, now only Rs.{product['price']}!"
+
+        availability = "In Stock ✅" if product.get("available", True) else "Sold Out ❌"
 
         return f"""Product: {product['title']}
 Category: {product.get('product_type', 'General')}
-Price: {product['price']} PKR{discount_text}
+Price: Rs.{product['price']}{discount_text}
+Availability: {availability}
 Description: {product.get('description', '')}
 Features/Tags:
 {features_text}
 
 Explain this product in Roman Urdu like a friendly salesman. Highlight:
-1. Product quality and brand value
-2. Best use cases (occasion, season, gifting)
-3. Why it's worth buying
+1. Design and fabric quality
+2. Perfect for which occasion (wedding, casual, office, etc.)
+3. Why customers love this style
 4. Discount value (if any) - EXCITEDLY mention!
 5. End with "Add to Cart karein?" and emojis
 
@@ -326,7 +331,7 @@ Keep it under 150 words, exciting and persuasive."""
                     json={
                         "model": "gpt-4o-mini",
                         "messages": [
-                            {"role": "system", "content": "You are REZON AI, a premium fashion assistant. Speak in Roman Urdu (Hinglish). Be friendly, persuasive, and concise."},
+                            {"role": "system", "content": "You are REZON AI, a premium fashion assistant for REZON store. Speak in Roman Urdu (Hinglish). Be friendly, persuasive, and concise."},
                             {"role": "user", "content": prompt}
                         ],
                         "temperature": 0.7,
@@ -359,11 +364,15 @@ Keep it under 150 words, exciting and persuasive."""
             msg += f"{desc} "
 
         if discount > 0 and compare:
-            msg += f"🔥 Abhi {discount}% OFF par mil raha hai! Sirf {price} PKR (was {compare} PKR). "
+            msg += f"🔥 Abhi {discount}% OFF par mil raha hai! Sirf Rs.{price} (was Rs.{compare}). "
         else:
-            msg += f"Price sirf {price} PKR. "
+            msg += f"Price sirf Rs.{price}. "
 
-        msg += "Quality bohat zabardast hai. Add to Cart karein? 🛒"
+        if not product.get("available", True):
+            msg += "⚠️ Yeh product sold out ho chuka hai! "
+        else:
+            msg += "Quality bohat zabardast hai. Add to Cart karein? 🛒"
+
         return msg
 
     async def chat_with_products(self, messages, products=None, force_products=False):
@@ -407,7 +416,7 @@ ai_service = AIService(OPENAI_API_KEY)
 
 @app.get("/")
 async def root():
-    return {"message": "REZON AI VTON Engine Running", "version": "5.0.0", "status": "ok"}
+    return {"message": "REZON AI VTON Engine Running", "version": "6.0.0", "status": "ok"}
 
 @app.get("/api/categories")
 async def get_categories():
@@ -496,7 +505,8 @@ async def chat_simple(request: SimpleChatRequest):
         product_keywords = ["product", "buy", "price", "watch", "watches", "men", "women", "perfume",
                            "wallet", "kapra", "cheez", "suit", "clothes", "fashion", "len", "lena",
                            "purchase", "dikhao", "show", "lawn", "fabric", "gift", "box", "wear",
-                           "unstitched", "dikhayo", "brand", "original"]
+                           "unstitched", "dikhayo", "brand", "original", "kaftan", "kurta", "dress",
+                           "stitched", "ladies", "girl"]
         needs_products = any(kw in request.message.lower() for kw in product_keywords)
 
         products = []
