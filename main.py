@@ -1,14 +1,10 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
-import json
+from typing import Optional, List
 import os
 import re
-import base64
-import uuid
-from datetime import datetime, timedelta
 import httpx
 
 # ============ CONFIGURATION ============
@@ -17,17 +13,17 @@ SHOPIFY_ADMIN_API_TOKEN = os.getenv("SHOPIFY_ADMIN_API_TOKEN", "")
 SHOPIFY_STOREFRONT_ACCESS_TOKEN = os.getenv("SHOPIFY_STOREFRONT_ACCESS_TOKEN", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
-SHOPIFY_SHOP_DOMAIN = SHOPIFY_SHOP_DOMAIN.rstrip('/')
+SHOPIFY_SHOP_DOMAIN = SHOPIFY_SHOP_DOMAIN.rstrip('/').replace("https://", "").replace("http://", "")
 
 print("=" * 60)
-print("CONFIG LOADED:")
-print("  SHOPIFY_SHOP_DOMAIN:", SHOPIFY_SHOP_DOMAIN)
-print("  ADMIN_TOKEN set:", bool(SHOPIFY_ADMIN_API_TOKEN))
-print("  STOREFRONT_TOKEN set:", bool(SHOPIFY_STOREFRONT_ACCESS_TOKEN))
-print("  OPENAI_KEY set:", bool(OPENAI_API_KEY))
+print("REZON AI CONFIG:")
+print("  SHOP_DOMAIN:", SHOPIFY_SHOP_DOMAIN)
+print("  ADMIN_TOKEN:", "SET" if SHOPIFY_ADMIN_API_TOKEN else "MISSING")
+print("  STOREFRONT_TOKEN:", "SET" if SHOPIFY_STOREFRONT_ACCESS_TOKEN else "MISSING")
+print("  OPENAI_KEY:", "SET" if OPENAI_API_KEY else "MISSING")
 print("=" * 60)
 
-app = FastAPI(title="REZON AI VTON Engine", version="6.1.0")
+app = FastAPI(title="REZON AI Engine", version="6.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,11 +34,7 @@ app.add_middleware(
 )
 
 # ============ MODELS ============
-class ChatMessage(BaseModel):
-    role: str
-    content: str
-
-class SimpleChatRequest(BaseModel):
+class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = "default"
 
@@ -56,7 +48,7 @@ class AddToCartRequest(BaseModel):
     variant_id: str
     quantity: int = 1
 
-# ============ HTML STRIPPER ============
+# ============ HELPERS ============
 def strip_html(html_text):
     if not html_text:
         return ""
@@ -90,34 +82,25 @@ class ShopifyClient:
             pass
         return 0
 
-    def _get_category_from_product(self, p):
-        """Auto-detect category from product_type, tags, title, vendor"""
+    def _get_category(self, p):
         product_type = p.get("product_type", "").lower()
         tags = [t.lower() for t in p.get("tags", [])]
         title = p.get("title", "").lower()
         vendor = p.get("vendor", "").lower()
+        all_text = f"{product_type} {' '.join(tags)} {title} {vendor}"
 
-        all_text = product_type + " " + " ".join(tags) + " " + title + " " + vendor
-
-        # Women's Clothing
         if any(k in all_text for k in ["women", "womens", "ladies", "female", "girl", "kaftan", "kurta", "shalwar", "kameez", "dress", "stitched", "unstitched", "lawn", "cotton", "fabric"]):
             return "womens"
-        # Men's Clothing
         if any(k in all_text for k in ["men", "mens", "gent", "gentleman", "male", "boys"]):
             return "mens"
-        # Watches
-        if any(k in all_text for k in ["watch", "watches", "timepiece", "wristwatch", "analog", "digital"]):
+        if any(k in all_text for k in ["watch", "watches", "timepiece", "wristwatch"]):
             return "watches"
-        # Perfumes
         if any(k in all_text for k in ["perfume", "fragrance", "oud", "scent", "cologne", "attar"]):
             return "perfumes"
-        # Wallets/Accessories
         if any(k in all_text for k in ["wallet", "belt", "accessory", "accessories", "bag", "handbag"]):
             return "accessories"
-        # Gift
         if any(k in all_text for k in ["gift", "box", "combo", "set", "bundle"]):
             return "gifts"
-
         return product_type if product_type else "other"
 
     def _format_product(self, p):
@@ -131,17 +114,10 @@ class ShopifyClient:
         variant_id_num = variant.get("id")
         variant_id_gid = f"gid://shopify/ProductVariant/{variant_id_num}" if variant_id_num else None
 
-        category = self._get_category_from_product(p)
+        inventory_qty = variant.get("inventory_quantity", 0)
+        available = inventory_qty > 0
 
-        # Get all images
         images = [img.get("src") for img in p.get("images", []) if img.get("src")]
-
-        # Check availability from inventory
-        available = True
-        if p.get("variants"):
-            first_variant = p["variants"][0]
-            inventory_qty = first_variant.get("inventory_quantity", 0)
-            available = inventory_qty > 0
 
         return {
             "id": f"gid://shopify/Product/{p['id']}",
@@ -155,7 +131,7 @@ class ShopifyClient:
             "images": images,
             "variant_id": variant_id_gid,
             "numeric_variant_id": str(variant_id_num) if variant_id_num else None,
-            "category": category,
+            "category": self._get_category(p),
             "tags": p.get("tags", []),
             "discount_percent": discount,
             "product_type": p.get("product_type", ""),
@@ -165,91 +141,67 @@ class ShopifyClient:
         }
 
     async def fetch_all_products(self, limit=50):
-        """Fetch ALL real products from store"""
         if not self.admin_headers["X-Shopify-Access-Token"]:
-            print("❌ ADMIN TOKEN NOT SET")
+            print("ADMIN TOKEN NOT SET")
             return []
 
         url = f"{self.admin_rest_url}/products.json?limit={limit}&status=active"
-
-        print(f"🔍 Fetching products from: {url}")
+        print(f"Fetching: {url}")
 
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(url, headers=self.admin_headers, timeout=15.0)
 
-            print(f"📡 Admin API Status: {response.status_code}")
+            print(f"Status: {response.status_code}")
 
             if response.status_code == 401:
-                print("❌ 401 Unauthorized - Token invalid or missing permissions")
+                print("ERROR 401: Token invalid")
                 return []
             if response.status_code == 403:
-                print("❌ 403 Forbidden - Token lacks 'read_products' permission")
+                print("ERROR 403: Token lacks permissions")
                 return []
             if response.status_code != 200:
-                print(f"❌ Error {response.status_code}: {response.text[:300]}")
+                print(f"ERROR {response.status_code}: {response.text[:300]}")
                 return []
 
             data = response.json()
             products = data.get("products", [])
-
-            print(f"📦 Raw products count: {len(products)}")
+            print(f"Found {len(products)} raw products")
 
             if not products:
-                print("⚠️ No products found")
                 return []
 
             formatted = [self._format_product(p) for p in products]
             self._cached_products = formatted
-
-            print(f"✅ Formatted {len(formatted)} products")
-            for p in formatted[:3]:
-                print(f"   - {p['title']} | {p['category']} | Rs.{p['price']} | Available: {p['available']}")
-
             return formatted
 
         except Exception as e:
-            print(f"❌ Admin API error: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"Fetch error: {e}")
             return []
 
     async def get_categories(self):
-        """Generate categories from REAL products"""
         products = await self.fetch_all_products(limit=50)
-
         if not products:
-            print("⚠️ No products to generate categories")
             return []
 
-        # Group products by category
         categories_map = {}
         for p in products:
             cat = p.get("category", "other")
-            if cat not in categories_map:
-                categories_map[cat] = []
-            categories_map[cat].append(p)
+            categories_map.setdefault(cat, []).append(p)
 
-        # Build category list
+        display_names = {
+            "womens": "Women's Collection",
+            "mens": "Men's Collection",
+            "watches": "Watches",
+            "perfumes": "Perfumes",
+            "accessories": "Accessories",
+            "gifts": "Gift Sets",
+            "other": "Other Products"
+        }
+
         categories = []
         for cat_id, cat_products in categories_map.items():
-            # Get first product image as category image
-            first_img = None
-            for p in cat_products:
-                if p.get("image_url"):
-                    first_img = p["image_url"]
-                    break
-
-            display_names = {
-                "womens": "Women's Collection",
-                "mens": "Men's Collection",
-                "watches": "Watches",
-                "perfumes": "Perfumes",
-                "accessories": "Accessories",
-                "gifts": "Gift Sets",
-                "other": "Other Products"
-            }
-
+            first_img = next((p.get("image_url") for p in cat_products if p.get("image_url")), None)
             categories.append({
                 "id": cat_id,
                 "name": display_names.get(cat_id, cat_id.title()),
@@ -257,27 +209,21 @@ class ShopifyClient:
                 "product_count": len(cat_products)
             })
 
-        print(f"✅ Generated {len(categories)} categories: {[c['name'] for c in categories]}")
+        print(f"Categories: {[c['name'] for c in categories]}")
         return categories
 
     async def fetch_products_by_category(self, category, limit=10):
-        """Fetch products by category"""
         products = await self.fetch_all_products(limit=50)
-
         if not products:
             return []
-
         filtered = [p for p in products if p.get("category") == category]
         return filtered[:limit]
 
     async def get_product_by_id(self, product_id):
-        """Get single product by ID or handle"""
         products = await self.fetch_all_products(limit=50)
-
         for p in products:
             if p["id"] == product_id or p["handle"] == product_id:
                 return p
-
         return None
 
     async def create_cart(self, variant_id, quantity=1):
@@ -292,7 +238,6 @@ class ShopifyClient:
             }
         }
         """
-
         variables = {"input": {"lines": [{"quantity": quantity, "merchandiseId": variant_id}]}}
 
         try:
@@ -315,36 +260,29 @@ class AIService:
         self.api_key = api_key
         self.url = "https://api.openai.com/v1/chat/completions"
 
-    def _build_product_detail_prompt(self, product):
+    def _build_prompt(self, product):
         features = product.get("features", [])
         features_text = "\n".join([f"- {f}" for f in features]) if features else ""
-
         discount_text = ""
         if product.get("discount_percent", 0) > 0:
-            discount_text = f"\n🔥 SPECIAL OFFER: {product['discount_percent']}% OFF! Original price Rs.{product.get('compare_at_price', '')}, now only Rs.{product['price']}!"
-
-        availability = "In Stock ✅" if product.get("available", True) else "Sold Out ❌"
+            discount_text = f"\n🔥 OFFER: {product['discount_percent']}% OFF! Original Rs.{product.get('compare_at_price', '')}, now Rs.{product['price']}!"
+        availability = "In Stock" if product.get("available", True) else "Sold Out"
 
         return f"""Product: {product['title']}
 Category: {product.get('product_type', 'General')}
 Price: Rs.{product['price']}{discount_text}
 Availability: {availability}
 Description: {product.get('description', '')}
-Features/Tags:
+Features:
 {features_text}
 
-Explain this product in Roman Urdu like a friendly salesman. Highlight:
-1. Design and fabric quality
-2. Perfect for which occasion (wedding, casual, office, etc.)
-3. Why customers love this style
-4. Discount value (if any) - EXCITEDLY mention!
-5. End with "Add to Cart karein?" and emojis
-
-Keep it under 150 words, exciting and persuasive."""
+Explain in Roman Urdu like a friendly salesman. Keep under 150 words. End with "Add to Cart karein?" """
 
     async def explain_product(self, product):
-        prompt = self._build_product_detail_prompt(product)
+        if not self.api_key:
+            return self._fallback(product)
 
+        prompt = self._build_prompt(product)
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -353,7 +291,7 @@ Keep it under 150 words, exciting and persuasive."""
                     json={
                         "model": "gpt-4o-mini",
                         "messages": [
-                            {"role": "system", "content": "You are REZON AI, a premium fashion assistant for REZON store. Speak in Roman Urdu (Hinglish). Be friendly, persuasive, and concise."},
+                            {"role": "system", "content": "You are REZON AI, a premium fashion assistant. Speak in Roman Urdu (Hinglish). Be friendly and persuasive."},
                             {"role": "user", "content": prompt}
                         ],
                         "temperature": 0.7,
@@ -361,51 +299,34 @@ Keep it under 150 words, exciting and persuasive."""
                     },
                     timeout=15.0
                 )
-
             result = response.json()
             if "choices" in result:
                 return result["choices"][0]["message"].get("content", "")
-            return self._fallback_explanation(product)
-
+            return self._fallback(product)
         except Exception as e:
-            print(f"AI explain error: {e}")
-            return self._fallback_explanation(product)
+            print(f"AI error: {e}")
+            return self._fallback(product)
 
-    def _fallback_explanation(self, product):
-        title = product.get("title", "")
-        price = product.get("price", "")
-        compare = product.get("compare_at_price", "")
-        discount = product.get("discount_percent", 0)
-        desc = product.get("description", "")[:100]
-        ptype = product.get("product_type", "")
-
-        msg = f"Yeh hamara {title} hai! "
-        if ptype:
-            msg += f"Category: {ptype}. "
-        if desc:
-            msg += f"{desc} "
-
-        if discount > 0 and compare:
-            msg += f"🔥 Abhi {discount}% OFF par mil raha hai! Sirf Rs.{price} (was Rs.{compare}). "
+    def _fallback(self, product):
+        msg = f"Yeh hamara {product['title']} hai! "
+        if product.get("discount_percent", 0) > 0 and product.get("compare_at_price"):
+            msg += f"🔥 {product['discount_percent']}% OFF! Sirf Rs.{product['price']} (was Rs.{product['compare_at_price']}). "
         else:
-            msg += f"Price sirf Rs.{price}. "
-
+            msg += f"Price: Rs.{product['price']}. "
         if not product.get("available", True):
-            msg += "⚠️ Yeh product sold out ho chuka hai! "
+            msg += "Sold Out! "
         else:
-            msg += "Quality bohat zabardast hai. Add to Cart karein? 🛒"
-
+            msg += "Quality zabardast hai. Add to Cart karein? 🛒"
         return msg
 
-    async def chat_with_products(self, messages, products=None, force_products=False):
-        system_prompt = "You are REZON AI, a premium fashion assistant for REZON store. Speak in Roman Urdu (Hinglish). Be friendly, concise, and helpful."
+    async def chat(self, messages):
+        if not self.api_key:
+            return {"text": "AI service unavailable.", "tool_calls": None}
 
-        formatted_messages = [{"role": "system", "content": system_prompt}]
+        system_prompt = "You are REZON AI, a premium fashion assistant. Speak in Roman Urdu (Hinglish). Be friendly and concise."
+        formatted = [{"role": "system", "content": system_prompt}]
         for msg in messages:
-            if isinstance(msg, dict):
-                formatted_messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
-            else:
-                formatted_messages.append({"role": msg.role, "content": msg.content})
+            formatted.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
 
         try:
             async with httpx.AsyncClient() as client:
@@ -414,23 +335,19 @@ Keep it under 150 words, exciting and persuasive."""
                     headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
                     json={
                         "model": "gpt-4o-mini",
-                        "messages": formatted_messages,
+                        "messages": formatted,
                         "temperature": 0.7,
                         "max_tokens": 500
                     },
                     timeout=20.0
                 )
-
             result = response.json()
             if "choices" not in result:
-                return {"text": "Sorry, AI service temporarily unavailable.", "tool_calls": None}
-
-            message = result["choices"][0]["message"]
-            return {"text": message.get("content", ""), "tool_calls": message.get("tool_calls")}
-
+                return {"text": "AI service busy.", "tool_calls": None}
+            msg = result["choices"][0]["message"]
+            return {"text": msg.get("content", ""), "tool_calls": msg.get("tool_calls")}
         except Exception as e:
-            print("OpenAI error:", str(e))
-            return {"text": "Sorry, AI service mein masla hai.", "tool_calls": None}
+            return {"text": "AI service mein masla hai.", "tool_calls": None}
 
 ai_service = AIService(OPENAI_API_KEY)
 
@@ -438,13 +355,11 @@ ai_service = AIService(OPENAI_API_KEY)
 
 @app.get("/")
 async def root():
-    return {"message": "REZON AI VTON Engine Running", "version": "6.1.0", "status": "ok"}
+    return {"message": "REZON AI Running", "version": "6.1.0", "status": "ok"}
 
-# ============ DEBUG ENDPOINTS ============
-
+# DEBUG ENDPOINTS
 @app.get("/api/debug/config")
 async def debug_config():
-    """Check if config is loaded properly"""
     return {
         "shop_domain": SHOPIFY_SHOP_DOMAIN,
         "admin_token_set": bool(SHOPIFY_ADMIN_API_TOKEN),
@@ -454,110 +369,72 @@ async def debug_config():
     }
 
 @app.get("/api/debug/test-admin")
-async def test_admin_api():
-    """Test Admin API connection"""
+async def test_admin():
     if not SHOPIFY_ADMIN_API_TOKEN:
-        return {"success": False, "error": "Admin token not set"}
-
+        return {"success": False, "error": "No admin token"}
     url = f"https://{SHOPIFY_SHOP_DOMAIN}/admin/api/2024-07/products.json?limit=1"
-    headers = {
-        "X-Shopify-Access-Token": SHOPIFY_ADMIN_API_TOKEN,
-        "Content-Type": "application/json"
-    }
-
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers, timeout=15.0)
-
+            response = await client.get(url, headers=shopify.admin_headers, timeout=15.0)
         return {
             "success": response.status_code == 200,
             "status_code": response.status_code,
-            "response_preview": response.text[:500] if response.text else "Empty",
-            "headers": dict(response.headers)
+            "preview": response.text[:500]
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
 @app.get("/api/debug/shop-info")
 async def shop_info():
-    """Get shop info to verify domain"""
     if not SHOPIFY_ADMIN_API_TOKEN:
-        return {"success": False, "error": "Admin token not set"}
-
+        return {"success": False, "error": "No admin token"}
     url = f"https://{SHOPIFY_SHOP_DOMAIN}/admin/api/2024-07/shop.json"
-    headers = {
-        "X-Shopify-Access-Token": SHOPIFY_ADMIN_API_TOKEN,
-        "Content-Type": "application/json"
-    }
-
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers, timeout=15.0)
-
+            response = await client.get(url, headers=shopify.admin_headers, timeout=15.0)
         if response.status_code == 200:
-            data = response.json()
-            return {
-                "success": True,
-                "shop": data.get("shop", {})
-            }
-        else:
-            return {
-                "success": False,
-                "status_code": response.status_code,
-                "error": response.text[:200]
-            }
+            return {"success": True, "shop": response.json().get("shop", {})}
+        return {"success": False, "status_code": response.status_code, "error": response.text[:200]}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-# ============ MAIN ENDPOINTS ============
-
+# MAIN ENDPOINTS
 @app.get("/api/categories")
 async def get_categories():
-    """Return REAL categories from store products"""
     try:
-        categories = await shopify.get_categories()
-        return {"success": True, "categories": categories}
+        cats = await shopify.get_categories()
+        return {"success": True, "categories": cats}
     except Exception as e:
-        print(f"Categories error: {e}")
-        import traceback
-        traceback.print_exc()
         return {"success": False, "error": str(e), "categories": []}
 
 @app.post("/api/products")
-async def get_products(request: ProductFetchRequest):
-    """Return REAL products by category"""
+async def get_products(req: ProductFetchRequest):
     try:
-        products = await shopify.fetch_products_by_category(request.category, limit=request.limit)
-        return {"success": True, "products": products, "category": request.category}
+        products = await shopify.fetch_products_by_category(req.category, limit=req.limit)
+        return {"success": True, "products": products, "category": req.category}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/product/explain")
-async def explain_product_endpoint(request: ProductFetchRequest):
-    """Get AI explanation for a specific product"""
+async def explain_product(req: ProductFetchRequest):
     try:
-        product = await shopify.get_product_by_id(request.product_id)
-
+        product = await shopify.get_product_by_id(req.product_id)
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
-
         explanation = await ai_service.explain_product(product)
-
         return {
             "success": True,
             "product": product,
             "explanation": explanation,
             "quick_replies": ["Add to Cart", "Aur products dekhein", "Discount code chahiye", "Styling tips"]
         }
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/cart/add")
-async def add_to_cart(request: AddToCartRequest):
+async def add_to_cart(req: AddToCartRequest):
     try:
-        result = await shopify.create_cart(request.variant_id, request.quantity)
-
+        result = await shopify.create_cart(req.variant_id, req.quantity)
         if "error" not in result:
             cart_data = result.get("data", {}).get("cartCreate", {})
             cart = cart_data.get("cart", {})
@@ -566,43 +443,37 @@ async def add_to_cart(request: AddToCartRequest):
                     "success": True,
                     "cart_id": cart.get("id"),
                     "checkout_url": cart.get("checkoutUrl"),
-                    "message": "Product cart mein add ho gaya! Checkout karein.",
-                    "action": "checkout"
+                    "message": "Product cart mein add ho gaya!"
                 })
 
-        # Fallback: Direct Shopify cart URL
-        variant_id = request.variant_id
+        # Fallback
+        variant_id = req.variant_id
         if variant_id.startswith("gid://"):
             variant_id = variant_id.split("/")[-1]
-
-        product = await shopify.get_product_by_id(request.variant_id)
+        product = await shopify.get_product_by_id(req.variant_id)
         handle = product.get("handle", "") if product else ""
-
-        cart_url = f"https://{SHOPIFY_SHOP_DOMAIN}/cart/add?id={variant_id}&quantity={request.quantity}"
+        cart_url = f"https://{SHOPIFY_SHOP_DOMAIN}/cart/add?id={variant_id}&quantity={req.quantity}"
         product_url = f"https://{SHOPIFY_SHOP_DOMAIN}/products/{handle}" if handle else cart_url
 
         return JSONResponse(content={
             "success": True,
             "checkout_url": cart_url,
             "product_url": product_url,
-            "message": "✅ Product cart mein add ho gaya! Neeche diye gaye button se checkout karein.",
-            "action": "cart"
+            "message": "Product cart mein add ho gaya! Checkout karein."
         })
-
     except Exception as e:
-        return JSONResponse(status_code=500, content={"success": False, "message": "Cart add failed", "error": str(e)})
+        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
 @app.post("/api/chat-simple")
-async def chat_simple(request: SimpleChatRequest):
+async def chat_simple(req: ChatRequest):
     try:
-        messages = [{"role": "user", "content": request.message}]
-
-        product_keywords = ["product", "buy", "price", "watch", "watches", "men", "women", "perfume",
-                           "wallet", "kapra", "cheez", "suit", "clothes", "fashion", "len", "lena",
-                           "purchase", "dikhao", "show", "lawn", "fabric", "gift", "box", "wear",
-                           "unstitched", "dikhayo", "brand", "original", "kaftan", "kurta", "dress",
-                           "stitched", "ladies", "girl"]
-        needs_products = any(kw in request.message.lower() for kw in product_keywords)
+        messages = [{"role": "user", "content": req.message}]
+        keywords = ["product", "buy", "price", "watch", "watches", "men", "women", "perfume",
+                   "wallet", "kapra", "cheez", "suit", "clothes", "fashion", "len", "lena",
+                   "purchase", "dikhao", "show", "lawn", "fabric", "gift", "box", "wear",
+                   "unstitched", "dikhayo", "brand", "original", "kaftan", "kurta", "dress",
+                   "stitched", "ladies", "girl"]
+        needs_products = any(kw in req.message.lower() for kw in keywords)
 
         products = []
         if needs_products:
@@ -611,30 +482,17 @@ async def chat_simple(request: SimpleChatRequest):
             except Exception as e:
                 print("Product fetch error:", e)
 
-        ai_response = await ai_service.chat_with_products(messages, products, force_products=needs_products and len(products) > 0)
-
-        if needs_products:
-            if len(products) == 0:
-                products = []
-
-            return JSONResponse(content={
-                "success": True,
-                "response": ai_response.get("text") or "Yeh hain hamare best products!",
-                "product_cards": products,
-                "quick_replies": ["Categories dekhein", "Discount code chahiye", "New arrivals"],
-                "session_id": request.session_id
-            })
+        ai_response = await ai_service.chat(messages)
 
         return JSONResponse(content={
             "success": True,
             "response": ai_response.get("text") or "Main aapki madad karne ke liye tayyar hoon!",
-            "product_cards": None,
-            "quick_replies": ["Categories dekhein", "Styling tips chahiye", "Discount code"],
-            "session_id": request.session_id
+            "product_cards": products if needs_products else None,
+            "quick_replies": ["Categories dekhein", "Discount code chahiye", "New arrivals"],
+            "session_id": req.session_id
         })
-
     except Exception as e:
-        return JSONResponse(status_code=500, content={"success": False, "response": "Kuch galat ho gaya.", "error": str(e)})
+        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
 if __name__ == "__main__":
     import uvicorn
