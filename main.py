@@ -18,15 +18,16 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 SHOPIFY_CLIENT_ID = os.getenv("SHOPIFY_CLIENT_ID", "")
 SHOPIFY_CLIENT_SECRET = os.getenv("SHOPIFY_CLIENT_SECRET", "")
 
-# Ensure domain has .myshopify.com
-if SHOPIFY_SHOP_DOMAIN and not SHOPIFY_SHOP_DOMAIN.endswith('.myshopify.com'):
-    SHOPIFY_SHOP_DOMAIN = SHOPIFY_SHOP_DOMAIN + '.myshopify.com'
+# DO NOT auto-append .myshopify.com - user has custom domain
+# Just ensure no trailing slash
+SHOPIFY_SHOP_DOMAIN = SHOPIFY_SHOP_DOMAIN.rstrip('/')
 
 print("=" * 60)
-print("SHOPIFY_SHOP_DOMAIN:", SHOPIFY_SHOP_DOMAIN)
-print("SHOPIFY_ADMIN_API_TOKEN set:", bool(SHOPIFY_ADMIN_API_TOKEN))
-print("SHOPIFY_STOREFRONT_ACCESS_TOKEN set:", bool(SHOPIFY_STOREFRONT_ACCESS_TOKEN))
-print("OPENAI_API_KEY set:", bool(OPENAI_API_KEY))
+print("CONFIG LOADED:")
+print("  SHOPIFY_SHOP_DOMAIN:", SHOPIFY_SHOP_DOMAIN)
+print("  ADMIN_TOKEN set:", bool(SHOPIFY_ADMIN_API_TOKEN))
+print("  STOREFRONT_TOKEN set:", bool(SHOPIFY_STOREFRONT_ACCESS_TOKEN))
+print("  OPENAI_KEY set:", bool(OPENAI_API_KEY))
 print("=" * 60)
 
 app = FastAPI(title="REZON AI VTON Engine", version="1.0.0")
@@ -40,7 +41,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ============ MOCK PRODUCTS (Fallback) ============
+# ============ MOCK PRODUCTS (Fallback when Shopify API fails) ============
 MOCK_PRODUCTS = [
     {
         "id": "gid://shopify/Product/1",
@@ -192,9 +193,10 @@ class ShopifyClient:
         }
 
     async def fetch_products(self, query: str = None, limit: int = 5) -> List[Dict]:
-        # Check if credentials are available
+        # Check if storefront token is available
         if not self.storefront_headers["X-Shopify-Storefront-Access-Token"]:
-            print("WARNING: No storefront token available, using mock products")
+            print("WARNING: SHOPIFY_STOREFRONT_ACCESS_TOKEN not set. Using mock products.")
+            print("Please add SHOPIFY_STOREFRONT_ACCESS_TOKEN to Railway variables.")
             return MOCK_PRODUCTS[:limit]
 
         search_query = f"title:*{query}*" if query else ""
@@ -246,6 +248,7 @@ class ShopifyClient:
         variables = {"query": search_query, "limit": limit}
 
         try:
+            print(f"Fetching products from: {self.storefront_url}")
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     self.storefront_url,
@@ -255,11 +258,15 @@ class ShopifyClient:
                 )
 
                 print(f"Shopify API Status: {response.status_code}")
-                print(f"Shopify API Response text (first 500 chars): {response.text[:500]}")
+                print(f"Response length: {len(response.text)} chars")
 
                 # Check if response is HTML (error page) instead of JSON
-                if response.text.strip().startswith('<'):
-                    print("ERROR: Shopify returned HTML instead of JSON. Check credentials.")
+                if response.text.strip().startswith('<') or not response.text.strip():
+                    print("ERROR: Shopify returned HTML/empty response instead of JSON.")
+                    print("This usually means:")
+                    print("  1. SHOPIFY_STOREFRONT_ACCESS_TOKEN is wrong/missing")
+                    print("  2. Storefront API is not enabled")
+                    print("  3. Domain is incorrect")
                     return MOCK_PRODUCTS[:limit]
 
                 data = response.json()
@@ -292,6 +299,7 @@ class ShopifyClient:
                     "variant_id": variant["id"] if variant else None
                 })
 
+            print(f"Successfully fetched {len(products)} products from Shopify")
             return products
 
         except json.JSONDecodeError as e:
