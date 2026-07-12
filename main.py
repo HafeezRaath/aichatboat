@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -6,6 +6,7 @@ from typing import Optional, List
 import os
 import re
 import httpx
+from urllib.parse import urlparse
 
 # ============ CONFIGURATION ============
 SHOPIFY_SHOP_DOMAIN = os.getenv("SHOPIFY_SHOP_DOMAIN", "your-store.myshopify.com")
@@ -13,6 +14,7 @@ SHOPIFY_ADMIN_API_TOKEN = os.getenv("SHOPIFY_ADMIN_API_TOKEN", "")
 SHOPIFY_STOREFRONT_ACCESS_TOKEN = os.getenv("SHOPIFY_STOREFRONT_ACCESS_TOKEN", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
+# Clean domain
 SHOPIFY_SHOP_DOMAIN = SHOPIFY_SHOP_DOMAIN.rstrip('/').replace("https://", "").replace("http://", "")
 
 print("=" * 60)
@@ -23,7 +25,7 @@ print("  STOREFRONT_TOKEN:", "SET" if SHOPIFY_STOREFRONT_ACCESS_TOKEN else "MISS
 print("  OPENAI_KEY:", "SET" if OPENAI_API_KEY else "MISSING")
 print("=" * 60)
 
-app = FastAPI(title="REZON AI Engine", version="6.1.0")
+app = FastAPI(title="REZON AI Engine", version="6.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -60,8 +62,13 @@ def strip_html(html_text):
 class ShopifyClient:
     def __init__(self, shop_domain, admin_token, storefront_token):
         self.shop_domain = shop_domain
-        self.admin_rest_url = f"https://{shop_domain}/admin/api/2024-07"
-        self.storefront_url = f"https://{shop_domain}/api/2024-07/graphql.json"
+        self.admin_token = admin_token
+        self.storefront_token = storefront_token
+        
+        # These will be resolved if domain redirects
+        self._admin_base_url = None
+        self._storefront_url = None
+        
         self.admin_headers = {
             "Content-Type": "application/json",
             "X-Shopify-Access-Token": admin_token
@@ -71,6 +78,42 @@ class ShopifyClient:
             "X-Shopify-Storefront-Access-Token": storefront_token
         }
         self._cached_products = None
+
+    def _get_admin_base(self):
+        if self._admin_base_url:
+            return self._admin_base_url
+        return f"https://{self.shop_domain}/admin/api/2024-07"
+
+    def _get_storefront_url(self):
+        if self._storefront_url:
+            return self._storefront_url
+        return f"https://{self.shop_domain}/api/2024-07/graphql.json"
+
+    async def _admin_request(self, endpoint):
+        """Make admin request with manual redirect handling"""
+        base_url = self._get_admin_base()
+        url = f"{base_url}{endpoint}"
+        
+        async with httpx.AsyncClient() as client:
+            # First try without redirects
+            response = await client.get(url, headers=self.admin_headers, timeout=15.0, follow_redirects=False)
+            
+            # Handle 301/302 manually to preserve auth headers
+            if response.status_code in (301, 302, 307, 308):
+                location = response.headers.get('location')
+                if location:
+                    print(f"🔀 Redirect detected: {location}")
+                    # Parse new base URL
+                    parsed = urlparse(location)
+                    new_base = f"{parsed.scheme}://{parsed.netloc}/admin/api/2024-07"
+                    self._admin_base_url = new_base
+                    print(f"✅ Resolved admin base: {new_base}")
+                    
+                    # Retry with resolved URL
+                    url = f"{new_base}{endpoint}"
+                    response = await client.get(url, headers=self.admin_headers, timeout=15.0)
+            
+            return response
 
     def _calculate_discount(self, price_str, compare_str):
         try:
@@ -141,17 +184,15 @@ class ShopifyClient:
         }
 
     async def fetch_all_products(self, limit=50):
-        if not self.admin_headers["X-Shopify-Access-Token"]:
+        if not self.admin_token:
             print("ADMIN TOKEN NOT SET")
             return []
 
-        url = f"{self.admin_rest_url}/products.json?limit={limit}&status=active"
-        print(f"Fetching: {url}")
+        endpoint = f"/products.json?limit={limit}&status=active"
+        print(f"Fetching admin endpoint: {endpoint}")
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, headers=self.admin_headers, timeout=15.0)
-
+            response = await self._admin_request(endpoint)
             print(f"Status: {response.status_code}")
 
             if response.status_code == 401:
@@ -161,7 +202,7 @@ class ShopifyClient:
                 print("ERROR 403: Token lacks permissions")
                 return []
             if response.status_code != 200:
-                print(f"ERROR {response.status_code}: {response.text[:300]}")
+                print(f"ERROR {response.status_code}: {response.text[:500]}")
                 return []
 
             data = response.json()
@@ -173,15 +214,22 @@ class ShopifyClient:
 
             formatted = [self._format_product(p) for p in products]
             self._cached_products = formatted
+            
+            for p in formatted[:3]:
+                print(f"   ✅ {p['title']} | {p['category']} | Rs.{p['price']} | Available: {p['available']}")
+            
             return formatted
 
         except Exception as e:
             print(f"Fetch error: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     async def get_categories(self):
         products = await self.fetch_all_products(limit=50)
         if not products:
+            print("No products found for categories")
             return []
 
         categories_map = {}
@@ -227,7 +275,7 @@ class ShopifyClient:
         return None
 
     async def create_cart(self, variant_id, quantity=1):
-        if not self.storefront_headers["X-Shopify-Storefront-Access-Token"]:
+        if not self.storefront_token:
             return {"error": "No storefront token"}
 
         mutation = """
@@ -241,9 +289,10 @@ class ShopifyClient:
         variables = {"input": {"lines": [{"quantity": quantity, "merchandiseId": variant_id}]}}
 
         try:
+            url = self._get_storefront_url()
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    self.storefront_url,
+                    url,
                     headers=self.storefront_headers,
                     json={"query": mutation, "variables": variables},
                     timeout=10.0
@@ -355,7 +404,7 @@ ai_service = AIService(OPENAI_API_KEY)
 
 @app.get("/")
 async def root():
-    return {"message": "REZON AI Running", "version": "6.1.0", "status": "ok"}
+    return {"message": "REZON AI Running", "version": "6.3.0", "status": "ok"}
 
 # DEBUG ENDPOINTS
 @app.get("/api/debug/config")
@@ -372,13 +421,13 @@ async def debug_config():
 async def test_admin():
     if not SHOPIFY_ADMIN_API_TOKEN:
         return {"success": False, "error": "No admin token"}
-    url = f"https://{SHOPIFY_SHOP_DOMAIN}/admin/api/2024-07/products.json?limit=1"
+    
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=shopify.admin_headers, timeout=15.0)
+        response = await shopify._admin_request("/products.json?limit=1")
         return {
             "success": response.status_code == 200,
             "status_code": response.status_code,
+            "resolved_base": shopify._admin_base_url,
             "preview": response.text[:500]
         }
     except Exception as e:
@@ -388,13 +437,12 @@ async def test_admin():
 async def shop_info():
     if not SHOPIFY_ADMIN_API_TOKEN:
         return {"success": False, "error": "No admin token"}
-    url = f"https://{SHOPIFY_SHOP_DOMAIN}/admin/api/2024-07/shop.json"
+    
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=shopify.admin_headers, timeout=15.0)
+        response = await shopify._admin_request("/shop.json")
         if response.status_code == 200:
             return {"success": True, "shop": response.json().get("shop", {})}
-        return {"success": False, "status_code": response.status_code, "error": response.text[:200]}
+        return {"success": False, "status_code": response.status_code, "error": response.text[:500]}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -405,6 +453,8 @@ async def get_categories():
         cats = await shopify.get_categories()
         return {"success": True, "categories": cats}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return {"success": False, "error": str(e), "categories": []}
 
 @app.post("/api/products")
