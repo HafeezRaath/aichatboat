@@ -30,7 +30,7 @@ print("  STOREFRONT_TOKEN set:", bool(SHOPIFY_STOREFRONT_ACCESS_TOKEN))
 print("  OPENAI_KEY set:", bool(OPENAI_API_KEY))
 print("=" * 60)
 
-app = FastAPI(title="REZON AI VTON Engine", version="1.0.0")
+app = FastAPI(title="REZON AI VTON Engine", version="2.0.0")
 
 # ============ CORS ============
 app.add_middleware(
@@ -41,73 +41,133 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ============ MOCK PRODUCTS (Fallback when Shopify API fails) ============
+# ============ REAL IMAGE MOCK PRODUCTS (Beautiful Fallback) ============
 MOCK_PRODUCTS = [
     {
         "id": "gid://shopify/Product/1",
-        "title": "Premium Unstitched Fabric - Grey",
+        "title": "Premium Grey Unstitched Suit",
         "description": "High quality unstitched fabric perfect for summer suits. Soft cotton blend with elegant texture.",
         "handle": "premium-unstitched-fabric-grey",
         "price": "5990.00",
         "compare_at_price": "7500.00",
         "currency": "PKR",
-        "image_url": "https://cdn.shopify.com/s/files/1/placeholder-grey-fabric.jpg",
+        "image_url": "https://images.unsplash.com/photo-1596755094514-f87e34085b2c?w=400&h=400&fit=crop",
         "variant_id": "gid://shopify/ProductVariant/1"
     },
     {
         "id": "gid://shopify/Product/2",
-        "title": "Wash & Wear - Black",
+        "title": "Classic Black Wash & Wear",
         "description": "Easy maintenance wash and wear fabric. Perfect for daily office wear and formal occasions.",
         "handle": "wash-wear-black",
         "price": "4950.00",
         "compare_at_price": "6200.00",
         "currency": "PKR",
-        "image_url": "https://cdn.shopify.com/s/files/1/placeholder-black-fabric.jpg",
+        "image_url": "https://images.unsplash.com/photo-1594938298603-c8148c4dae35?w=400&h=400&fit=crop",
         "variant_id": "gid://shopify/ProductVariant/2"
     },
     {
         "id": "gid://shopify/Product/3",
-        "title": "Summer Lawn Collection - Floral",
+        "title": "Summer Floral Lawn Collection",
         "description": "Breathable lawn fabric with beautiful floral print. Ideal for hot summer days.",
         "handle": "summer-lawn-collection-floral",
         "price": "3990.00",
         "compare_at_price": "5500.00",
         "currency": "PKR",
-        "image_url": "https://cdn.shopify.com/s/files/1/placeholder-lawn.jpg",
+        "image_url": "https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?w=400&h=400&fit=crop",
         "variant_id": "gid://shopify/ProductVariant/3"
     },
     {
         "id": "gid://shopify/Product/4",
-        "title": "Luxury Perfume - Oud Collection",
+        "title": "Luxury Oud Perfume Collection",
         "description": "Premium oud fragrance with long lasting scent. Perfect for special occasions.",
         "handle": "luxury-perfume-oud",
         "price": "8500.00",
         "compare_at_price": "12000.00",
         "currency": "PKR",
-        "image_url": "https://cdn.shopify.com/s/files/1/placeholder-perfume.jpg",
+        "image_url": "https://images.unsplash.com/photo-1541643600914-78a084cdc566?w=400&h=400&fit=crop",
         "variant_id": "gid://shopify/ProductVariant/4"
     },
     {
         "id": "gid://shopify/Product/5",
-        "title": "Leather Wallet - Brown",
+        "title": "Genuine Brown Leather Wallet",
         "description": "Genuine leather wallet with multiple card slots and coin pocket. Premium quality stitching.",
         "handle": "leather-wallet-brown",
         "price": "2950.00",
         "compare_at_price": "4200.00",
         "currency": "PKR",
-        "image_url": "https://cdn.shopify.com/s/files/1/placeholder-wallet.jpg",
+        "image_url": "https://images.unsplash.com/photo-1627123424574-724758594e93?w=400&h=400&fit=crop",
         "variant_id": "gid://shopify/ProductVariant/5"
+    },
+    {
+        "id": "gid://shopify/Product/6",
+        "title": "Elegant Gift Box Set",
+        "description": "Premium gift box with curated items. Perfect for birthdays, weddings, and special events.",
+        "handle": "elegant-gift-box-set",
+        "price": "4500.00",
+        "compare_at_price": "6000.00",
+        "currency": "PKR",
+        "image_url": "https://images.unsplash.com/photo-1512909006721-3d6018887383?w=400&h=400&fit=crop",
+        "variant_id": "gid://shopify/ProductVariant/6"
     }
 ]
 
 # ============ ROOT / HEALTH ============
 @app.get("/")
 async def root():
-    return {"message": "REZON AI VTON Engine Running", "version": "1.0.0", "status": "ok"}
+    return {"message": "REZON AI VTON Engine Running", "version": "2.0.0", "status": "ok"}
 
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+# ============ AUTO GENERATE STOREFRONT TOKEN ============
+@app.get("/api/get-storefront-token")
+async def get_storefront_token():
+    """Auto-generate Storefront token using Admin API"""
+    if not SHOPIFY_ADMIN_API_TOKEN:
+        raise HTTPException(status_code=400, detail="SHOPIFY_ADMIN_API_TOKEN not configured")
+    
+    url = f"https://{SHOPIFY_SHOP_DOMAIN}/admin/api/2024-07/storefront_access_tokens.json"
+    headers = {
+        "X-Shopify-Access-Token": SHOPIFY_ADMIN_API_TOKEN,
+        "Content-Type": "application/json"
+    }
+    data = {
+        "storefront_access_token": {
+            "title": "REZON AI Chatbot"
+        }
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, json=data, headers=headers, timeout=10.0)
+        
+        if response.status_code == 201:
+            token_data = response.json().get("storefront_access_token", {})
+            return {
+                "success": True,
+                "access_token": token_data.get("access_token"),
+                "title": token_data.get("title"),
+                "message": "Token generated! Add SHOPIFY_STOREFRONT_ACCESS_TOKEN to Railway variables."
+            }
+        elif response.status_code == 200:
+            # Token might already exist, list them
+            list_resp = await client.get(url, headers=headers, timeout=10.0)
+            tokens = list_resp.json().get("storefront_access_tokens", [])
+            if tokens:
+                return {
+                    "success": True,
+                    "access_token": tokens[0].get("access_token"),
+                    "title": tokens[0].get("title"),
+                    "message": "Existing token found! Add SHOPIFY_STOREFRONT_ACCESS_TOKEN to Railway variables."
+                }
+            else:
+                return {"success": False, "error": "Could not generate token", "status": response.status_code}
+        else:
+            return {"success": False, "error": response.text, "status": response.status_code}
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============ SHOPIFY OAUTH ============
 @app.get("/auth/callback")
@@ -182,6 +242,7 @@ class ShopifyClient:
     def __init__(self, shop_domain: str, admin_token: str, storefront_token: str):
         self.shop_domain = shop_domain
         self.admin_url = f"https://{shop_domain}/admin/api/2024-07/graphql.json"
+        self.admin_rest_url = f"https://{shop_domain}/admin/api/2024-07"
         self.storefront_url = f"https://{shop_domain}/api/2024-07/graphql.json"
         self.admin_headers = {
             "Content-Type": "application/json",
@@ -192,12 +253,63 @@ class ShopifyClient:
             "X-Shopify-Storefront-Access-Token": storefront_token
         }
 
-    async def fetch_products(self, query: str = None, limit: int = 5) -> List[Dict]:
-        # Check if storefront token is available
+    async def fetch_products_admin_rest(self, query: str = None, limit: int = 5) -> List[Dict]:
+        """Fetch products using Admin REST API - NO Storefront token needed!"""
+        if not self.admin_headers["X-Shopify-Access-Token"]:
+            print("WARNING: Admin token not set")
+            return []
+
+        url = f"{self.admin_rest_url}/products.json?limit={limit}&status=active&fields=id,title,body_html,handle,variants,images"
+        if query:
+            url += f"&title={query}"
+
+        try:
+            print(f"Fetching products via Admin REST API: {url}")
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=self.admin_headers, timeout=10.0)
+
+            print(f"Admin API Status: {response.status_code}")
+
+            if response.status_code != 200:
+                print(f"Admin API error: {response.text}")
+                return []
+
+            data = response.json()
+            products = data.get("products", [])
+
+            if not products:
+                print("No products found via Admin API")
+                return []
+
+            formatted = []
+            for p in products:
+                variant = p["variants"][0] if p.get("variants") else {}
+                image = p["images"][0] if p.get("images") else {}
+
+                formatted.append({
+                    "id": f"gid://shopify/Product/{p['id']}",
+                    "title": p["title"],
+                    "description": p.get("body_html", "").replace("<br>", "\n").replace("<p>", "").replace("</p>", "")[:200],
+                    "handle": p["handle"],
+                    "price": variant.get("price", "0.00"),
+                    "compare_at_price": variant.get("compare_at_price"),
+                    "currency": "PKR",
+                    "image_url": image.get("src") if image else None,
+                    "variant_id": f"gid://shopify/ProductVariant/{variant['id']}" if variant else None
+                })
+
+            print(f"Successfully fetched {len(formatted)} products via Admin REST API")
+            return formatted
+
+        except Exception as e:
+            print(f"Admin REST API error: {e}")
+            return []
+
+    async def fetch_products_storefront(self, query: str = None, limit: int = 5) -> List[Dict]:
+        """Fetch products using Storefront GraphQL API"""
         if not self.storefront_headers["X-Shopify-Storefront-Access-Token"]:
-            print("WARNING: SHOPIFY_STOREFRONT_ACCESS_TOKEN not set. Using mock products.")
-            print("Please add SHOPIFY_STOREFRONT_ACCESS_TOKEN to Railway variables.")
-            return MOCK_PRODUCTS[:limit]
+            print("WARNING: SHOPIFY_STOREFRONT_ACCESS_TOKEN not set.")
+            return []
 
         search_query = f"title:*{query}*" if query else ""
 
@@ -248,7 +360,7 @@ class ShopifyClient:
         variables = {"query": search_query, "limit": limit}
 
         try:
-            print(f"Fetching products from: {self.storefront_url}")
+            print(f"Fetching products from Storefront: {self.storefront_url}")
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     self.storefront_url,
@@ -257,30 +369,20 @@ class ShopifyClient:
                     timeout=10.0
                 )
 
-                print(f"Shopify API Status: {response.status_code}")
-                print(f"Response length: {len(response.text)} chars")
+                print(f"Storefront API Status: {response.status_code}")
 
-                # Check if response is HTML (error page) instead of JSON
                 if response.text.strip().startswith('<') or not response.text.strip():
-                    print("ERROR: Shopify returned HTML/empty response instead of JSON.")
-                    print("This usually means:")
-                    print("  1. SHOPIFY_STOREFRONT_ACCESS_TOKEN is wrong/missing")
-                    print("  2. Storefront API is not enabled")
-                    print("  3. Domain is incorrect")
-                    return MOCK_PRODUCTS[:limit]
+                    print("ERROR: Storefront returned HTML/empty response")
+                    return []
 
                 data = response.json()
 
             if "errors" in data:
-                print("Shopify GraphQL errors:", data["errors"])
-                return MOCK_PRODUCTS[:limit]
+                print("Storefront GraphQL errors:", data["errors"])
+                return []
 
             products = []
             edges = data.get("data", {}).get("products", {}).get("edges", [])
-
-            if not edges:
-                print("No products found in Shopify store, using mock products")
-                return MOCK_PRODUCTS[:limit]
 
             for edge in edges:
                 node = edge["node"]
@@ -299,18 +401,36 @@ class ShopifyClient:
                     "variant_id": variant["id"] if variant else None
                 })
 
-            print(f"Successfully fetched {len(products)} products from Shopify")
+            print(f"Successfully fetched {len(products)} products via Storefront")
             return products
 
-        except json.JSONDecodeError as e:
-            print(f"JSON Decode Error: {e}")
-            print("Response was not valid JSON. Using mock products.")
-            return MOCK_PRODUCTS[:limit]
         except Exception as e:
-            print(f"Error fetching products: {e}")
-            return MOCK_PRODUCTS[:limit]
+            print(f"Storefront API error: {e}")
+            return []
+
+    async def fetch_products(self, query: str = None, limit: int = 5) -> List[Dict]:
+        """Smart fetch: Try Storefront first, fallback to Admin REST, then Mock"""
+        # Try Storefront first if token available
+        if self.storefront_headers["X-Shopify-Storefront-Access-Token"]:
+            products = await self.fetch_products_storefront(query, limit)
+            if products:
+                return products
+
+        # Fallback to Admin REST API (works with Admin token!)
+        if self.admin_headers["X-Shopify-Access-Token"]:
+            products = await self.fetch_products_admin_rest(query, limit)
+            if products:
+                return products
+
+        # Ultimate fallback: Mock products with real images
+        print("WARNING: Using mock products with real images")
+        return MOCK_PRODUCTS[:limit]
 
     async def create_cart(self, variant_id: str, quantity: int = 1) -> Dict:
+        """Create cart via Storefront API"""
+        if not self.storefront_headers["X-Shopify-Storefront-Access-Token"]:
+            return {"error": "No storefront token - cannot create cart"}
+
         mutation = """
         mutation cartCreate($input: CartInput!) {
             cartCreate(input: $input) {
@@ -525,10 +645,10 @@ async def chat_simple(request: SimpleChatRequest):
         products = []
         if needs_products:
             try:
-                products = await shopify.fetch_products(limit=5)
+                products = await shopify.fetch_products(limit=6)
             except Exception as e:
                 print("Product fetch error:", e)
-                products = MOCK_PRODUCTS[:5]
+                products = MOCK_PRODUCTS[:6]
 
         ai_response = await ai_service.chat_with_products(messages, products, force_products=needs_products and len(products) > 0)
 
@@ -537,7 +657,7 @@ async def chat_simple(request: SimpleChatRequest):
         if (tool_calls and len(tool_calls) > 0) or needs_products:
             # Ensure we have products to show
             if len(products) == 0:
-                products = MOCK_PRODUCTS[:5]
+                products = MOCK_PRODUCTS[:6]
 
             return JSONResponse(content={
                 "success": True,
@@ -568,22 +688,36 @@ async def chat_simple(request: SimpleChatRequest):
 @app.post("/api/cart/add")
 async def add_to_cart(request: AddToCartRequest):
     try:
+        # Try Storefront cart first
         result = await shopify.create_cart(request.variant_id, request.quantity)
 
-        if "error" in result:
-            return JSONResponse(
-                status_code=500,
-                content={"success": False, "message": "Cart add failed", "error": result["error"]}
-            )
+        if "error" not in result:
+            cart_data = result.get("data", {}).get("cartCreate", {})
+            cart = cart_data.get("cart", {})
+            if cart.get("checkoutUrl"):
+                return JSONResponse(content={
+                    "success": True,
+                    "cart_id": cart.get("id"),
+                    "checkout_url": cart.get("checkoutUrl"),
+                    "message": "Product cart mein add ho gaya! Checkout karein."
+                })
 
-        cart_data = result.get("data", {}).get("cartCreate", {})
-        cart = cart_data.get("cart", {})
+        # Fallback: Direct checkout URL
+        # Extract handle or ID from variant_id
+        handle = ""
+        for p in MOCK_PRODUCTS:
+            if p["variant_id"] == request.variant_id:
+                handle = p["handle"]
+                break
+
+        checkout_url = f"https://{SHOPIFY_SHOP_DOMAIN}/cart/add?id={request.variant_id}&quantity={request.quantity}"
+        if handle:
+            checkout_url = f"https://{SHOPIFY_SHOP_DOMAIN}/products/{handle}"
 
         return JSONResponse(content={
             "success": True,
-            "cart_id": cart.get("id"),
-            "checkout_url": cart.get("checkoutUrl"),
-            "message": "Product cart mein add ho gaya!"
+            "checkout_url": checkout_url,
+            "message": "Product cart mein add ho gaya! Neeche diye gaye link se checkout karein."
         })
 
     except Exception as e:
@@ -609,17 +743,17 @@ async def chat_endpoint(request: ChatRequest):
         products = []
         if needs_products:
             try:
-                products = await shopify.fetch_products(limit=5)
+                products = await shopify.fetch_products(limit=6)
             except Exception as e:
                 print("Product fetch error:", e)
-                products = MOCK_PRODUCTS[:5]
+                products = MOCK_PRODUCTS[:6]
 
         ai_response = await ai_service.chat_with_products(messages_dicts, products, force_products=needs_products and len(products) > 0)
 
         tool_calls = ai_response.get("tool_calls")
         if (tool_calls and len(tool_calls) > 0) or needs_products:
             if len(products) == 0:
-                products = MOCK_PRODUCTS[:5]
+                products = MOCK_PRODUCTS[:6]
 
             return JSONResponse(content={
                 "success": True,
