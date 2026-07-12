@@ -27,7 +27,7 @@ print("  STOREFRONT_TOKEN set:", bool(SHOPIFY_STOREFRONT_ACCESS_TOKEN))
 print("  OPENAI_KEY set:", bool(OPENAI_API_KEY))
 print("=" * 60)
 
-app = FastAPI(title="REZON AI VTON Engine", version="4.0.0")
+app = FastAPI(title="REZON AI VTON Engine", version="5.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,138 +36,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ============ CATEGORIES ============
-CATEGORIES = [
-    {
-        "id": "unstitched",
-        "name": "Unstitched Fabric",
-        "name_urdu": "Unstitched Fabric",
-        "image": "https://images.unsplash.com/photo-1596755094514-f87e34085b2c?w=400&h=400&fit=crop",
-        "description": "Premium cotton, lawn, and wash & wear fabrics"
-    },
-    {
-        "id": "perfumes",
-        "name": "Perfumes",
-        "name_urdu": "Perfumes",
-        "image": "https://images.unsplash.com/photo-1541643600914-78a084cdc566?w=400&h=400&fit=crop",
-        "description": "Luxury oud and premium fragrances"
-    },
-    {
-        "id": "wallets",
-        "name": "Wallets",
-        "name_urdu": "Wallets",
-        "image": "https://images.unsplash.com/photo-1627123424574-724758594e93?w=400&h=400&fit=crop",
-        "description": "Genuine leather wallets and card holders"
-    },
-    {
-        "id": "gifts",
-        "name": "Gift Boxes",
-        "name_urdu": "Gift Boxes",
-        "image": "https://images.unsplash.com/photo-1512909006721-3d6018887383?w=400&h=400&fit=crop",
-        "description": "Curated gift sets for special occasions"
-    }
-]
-
-# ============ MOCK PRODUCTS ============
-MOCK_PRODUCTS = [
-    {
-        "id": "gid://shopify/Product/1",
-        "title": "Premium Grey Unstitched Suit",
-        "description": "High quality unstitched fabric perfect for summer suits. Soft cotton blend with elegant texture. 4.5 meter cutting with matching dupatta piece.",
-        "handle": "premium-unstitched-fabric-grey",
-        "price": "5990.00",
-        "compare_at_price": "7500.00",
-        "currency": "PKR",
-        "image_url": "https://images.unsplash.com/photo-1596755094514-f87e34085b2c?w=400&h=400&fit=crop",
-        "variant_id": "gid://shopify/ProductVariant/1",
-        "numeric_variant_id": "1",
-        "category": "unstitched",
-        "tags": ["unstitched", "cotton", "summer", "grey"],
-        "discount_percent": 20,
-        "features": ["Pure cotton blend", "4.5 meter suit cutting", "Soft & breathable", "Easy to stitch"]
-    },
-    {
-        "id": "gid://shopify/Product/2",
-        "title": "Classic Black Wash & Wear",
-        "description": "Easy maintenance wash and wear fabric. Perfect for daily office wear and formal occasions. Wrinkle-free technology.",
-        "handle": "wash-wear-black",
-        "price": "4950.00",
-        "compare_at_price": "6200.00",
-        "currency": "PKR",
-        "image_url": "https://images.unsplash.com/photo-1594938298603-c8148c4dae35?w=400&h=400&fit=crop",
-        "variant_id": "gid://shopify/ProductVariant/2",
-        "numeric_variant_id": "2",
-        "category": "unstitched",
-        "tags": ["wash-wear", "formal", "black", "wrinkle-free"],
-        "discount_percent": 20,
-        "features": ["Wrinkle-free fabric", "No ironing needed", "4 meter cutting", "Office wear perfect"]
-    },
-    {
-        "id": "gid://shopify/Product/3",
-        "title": "Summer Floral Lawn Collection",
-        "description": "Breathable lawn fabric with beautiful floral print. Ideal for hot summer days. Digital print with color guarantee.",
-        "handle": "summer-lawn-collection-floral",
-        "price": "3990.00",
-        "compare_at_price": "5500.00",
-        "currency": "PKR",
-        "image_url": "https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?w=400&h=400&fit=crop",
-        "variant_id": "gid://shopify/ProductVariant/3",
-        "numeric_variant_id": "3",
-        "category": "unstitched",
-        "tags": ["lawn", "floral", "summer", "digital-print"],
-        "discount_percent": 27,
-        "features": ["Digital floral print", "Color fast guarantee", "Soft lawn fabric", "2 piece suit"]
-    },
-    {
-        "id": "gid://shopify/Product/4",
-        "title": "Luxury Oud Perfume Collection",
-        "description": "Premium oud fragrance with long lasting scent. Perfect for special occasions. 100ml bottle with 24hr lasting power.",
-        "handle": "luxury-perfume-oud",
-        "price": "8500.00",
-        "compare_at_price": "12000.00",
-        "currency": "PKR",
-        "image_url": "https://images.unsplash.com/photo-1541643600914-78a084cdc566?w=400&h=400&fit=crop",
-        "variant_id": "gid://shopify/ProductVariant/4",
-        "numeric_variant_id": "4",
-        "category": "perfumes",
-        "tags": ["perfume", "oud", "luxury", "100ml"],
-        "discount_percent": 29,
-        "features": ["Pure oud extract", "24 hours lasting", "100ml premium bottle", "Gift packaging"]
-    },
-    {
-        "id": "gid://shopify/Product/5",
-        "title": "Genuine Brown Leather Wallet",
-        "description": "Genuine leather wallet with multiple card slots and coin pocket. Premium quality stitching. RFID protected.",
-        "handle": "leather-wallet-brown",
-        "price": "2950.00",
-        "compare_at_price": "4200.00",
-        "currency": "PKR",
-        "image_url": "https://images.unsplash.com/photo-1627123424574-724758594e93?w=400&h=400&fit=crop",
-        "variant_id": "gid://shopify/ProductVariant/5",
-        "numeric_variant_id": "5",
-        "category": "wallets",
-        "tags": ["wallet", "leather", "brown", "rfid"],
-        "discount_percent": 30,
-        "features": ["100% genuine leather", "RFID protection", "8 card slots", "Coin pocket included"]
-    },
-    {
-        "id": "gid://shopify/Product/6",
-        "title": "Elegant Gift Box Set",
-        "description": "Premium gift box with curated items. Perfect for birthdays, weddings, and special events. Includes wallet + perfume + keychain.",
-        "handle": "elegant-gift-box-set",
-        "price": "4500.00",
-        "compare_at_price": "6000.00",
-        "currency": "PKR",
-        "image_url": "https://images.unsplash.com/photo-1512909006721-3d6018887383?w=400&h=400&fit=crop",
-        "variant_id": "gid://shopify/ProductVariant/6",
-        "numeric_variant_id": "6",
-        "category": "gifts",
-        "tags": ["gift", "box", "premium", "combo"],
-        "discount_percent": 25,
-        "features": ["Wallet + Perfume + Keychain", "Premium gift packaging", "Ready to gift", "Best value combo"]
-    }
-]
 
 # ============ MODELS ============
 class ChatMessage(BaseModel):
@@ -210,6 +78,8 @@ class ShopifyClient:
             "Content-Type": "application/json",
             "X-Shopify-Storefront-Access-Token": storefront_token
         }
+        self._cached_categories = None
+        self._cached_products = None
 
     def _calculate_discount(self, price_str, compare_str):
         try:
@@ -221,7 +91,37 @@ class ShopifyClient:
             pass
         return 0
 
-    def _format_product(self, p, category=None):
+    def _get_category_from_product(self, p):
+        """Auto-detect category from product_type and tags"""
+        product_type = p.get("product_type", "").lower()
+        tags = [t.lower() for t in p.get("tags", [])]
+        title = p.get("title", "").lower()
+
+        # Watches
+        if any(k in product_type + str(tags) + title for k in ["watch", "watches", "timepiece", "wristwatch"]):
+            return "watches"
+        # Men's
+        if any(k in product_type + str(tags) + title for k in ["men", "mens", "gent", "gentleman", "male"]):
+            return "mens"
+        # Women's
+        if any(k in product_type + str(tags) + title for k in ["women", "womens", "ladies", "female", "girl"]):
+            return "womens"
+        # Perfumes
+        if any(k in product_type + str(tags) + title for k in ["perfume", "fragrance", "oud", "scent", "cologne"]):
+            return "perfumes"
+        # Wallets/Accessories
+        if any(k in product_type + str(tags) + title for k in ["wallet", "belt", "accessory", "accessories"]):
+            return "accessories"
+        # Clothing/Fabric
+        if any(k in product_type + str(tags) + title for k in ["fabric", "suit", "kurta", "shalwar", "unstitched", "cloth"]):
+            return "clothing"
+        # Gift
+        if any(k in product_type + str(tags) + title for k in ["gift", "box", "combo", "set"]):
+            return "gifts"
+
+        return product_type if product_type else "other"
+
+    def _format_product(self, p):
         variant = p["variants"][0] if p.get("variants") else {}
         image = p["images"][0] if p.get("images") else {}
 
@@ -232,18 +132,7 @@ class ShopifyClient:
         variant_id_num = variant.get("id")
         variant_id_gid = f"gid://shopify/ProductVariant/{variant_id_num}" if variant_id_num else None
 
-        tags = p.get("tags", [])
-        product_type = p.get("product_type", "").lower()
-        prod_category = category or "general"
-
-        if any(t in ["perfume", "oud", "fragrance"] for t in [product_type] + [t.lower() for t in tags]):
-            prod_category = "perfumes"
-        elif any(t in ["wallet", "leather"] for t in [product_type] + [t.lower() for t in tags]):
-            prod_category = "wallets"
-        elif any(t in ["gift", "box", "combo"] for t in [product_type] + [t.lower() for t in tags]):
-            prod_category = "gifts"
-        elif any(t in ["fabric", "unstitched", "lawn", "cotton"] for t in [product_type] + [t.lower() for t in tags]):
-            prod_category = "unstitched"
+        category = self._get_category_from_product(p)
 
         return {
             "id": f"gid://shopify/Product/{p['id']}",
@@ -256,7 +145,7 @@ class ShopifyClient:
             "image_url": image.get("src") if image else None,
             "variant_id": variant_id_gid,
             "numeric_variant_id": str(variant_id_num) if variant_id_num else None,
-            "category": prod_category,
+            "category": category,
             "tags": p.get("tags", []),
             "discount_percent": discount,
             "product_type": p.get("product_type", ""),
@@ -264,48 +153,108 @@ class ShopifyClient:
             "features": p.get("tags", [])[:4]
         }
 
-    async def fetch_products_admin_rest(self, query=None, category=None, limit=10):
+    async def fetch_all_products(self, limit=50):
+        """Fetch ALL real products from store"""
         if not self.admin_headers["X-Shopify-Access-Token"]:
+            print("❌ ADMIN TOKEN NOT SET")
             return []
 
         url = f"{self.admin_rest_url}/products.json?limit={limit}&status=active"
-        if query:
-            url += f"&title={query}"
 
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(url, headers=self.admin_headers, timeout=15.0)
 
             if response.status_code != 200:
+                print(f"❌ Admin API Error {response.status_code}: {response.text[:200]}")
                 return []
 
             data = response.json()
             products = data.get("products", [])
 
             if not products:
+                print("⚠️ No products found in your Shopify store")
                 return []
 
-            formatted = [self._format_product(p, category) for p in products]
+            formatted = [self._format_product(p) for p in products]
+            self._cached_products = formatted
 
-            if category:
-                formatted = [p for p in formatted if p["category"] == category]
-
+            print(f"✅ Fetched {len(formatted)} REAL products from your store!")
+            for p in formatted[:3]:
+                print(f"   - {p['title']} ({p['category']}) - {p['price']} PKR")
             return formatted
 
         except Exception as e:
-            print(f"Admin API error: {e}")
+            print(f"❌ Admin API error: {e}")
             return []
 
-    async def fetch_products(self, query=None, category=None, limit=10):
-        if self.admin_headers["X-Shopify-Access-Token"]:
-            products = await self.fetch_products_admin_rest(query, category, limit)
-            if products:
-                return products
+    async def get_categories(self):
+        """Generate categories from REAL products"""
+        products = await self.fetch_all_products(limit=50)
 
-        products = MOCK_PRODUCTS
-        if category:
-            products = [p for p in products if p.get("category") == category]
-        return products[:limit]
+        if not products:
+            return []
+
+        # Group products by category
+        categories_map = {}
+        for p in products:
+            cat = p.get("category", "other")
+            if cat not in categories_map:
+                categories_map[cat] = []
+            categories_map[cat].append(p)
+
+        # Build category list
+        categories = []
+        for cat_id, cat_products in categories_map.items():
+            # Get first product image as category image
+            first_img = None
+            for p in cat_products:
+                if p.get("image_url"):
+                    first_img = p["image_url"]
+                    break
+
+            # Category display name
+            display_names = {
+                "watches": "Watches",
+                "mens": "Men's Collection",
+                "womens": "Women's Collection",
+                "perfumes": "Perfumes",
+                "accessories": "Accessories",
+                "clothing": "Clothing",
+                "gifts": "Gift Sets",
+                "other": "Other Products"
+            }
+
+            categories.append({
+                "id": cat_id,
+                "name": display_names.get(cat_id, cat_id.title()),
+                "image": first_img or "https://images.unsplash.com/photo-1558618666-fcd25c85f82e?w=400&h=400&fit=crop",
+                "product_count": len(cat_products)
+            })
+
+        self._cached_categories = categories
+        print(f"✅ Generated {len(categories)} categories from real products: {[c['name'] for c in categories]}")
+        return categories
+
+    async def fetch_products_by_category(self, category, limit=10):
+        """Fetch products by category"""
+        products = await self.fetch_all_products(limit=50)
+
+        if not products:
+            return []
+
+        filtered = [p for p in products if p.get("category") == category]
+        return filtered[:limit]
+
+    async def get_product_by_id(self, product_id):
+        """Get single product by ID or handle"""
+        products = await self.fetch_all_products(limit=50)
+
+        for p in products:
+            if p["id"] == product_id or p["handle"] == product_id:
+                return p
+
+        return None
 
     async def create_cart(self, variant_id, quantity=1):
         if not self.storefront_headers["X-Shopify-Storefront-Access-Token"]:
@@ -351,14 +300,15 @@ class AIService:
             discount_text = f"\n🔥 SPECIAL OFFER: {product['discount_percent']}% OFF! Original price {product.get('compare_at_price', '')} PKR, now only {product['price']} PKR!"
 
         return f"""Product: {product['title']}
+Category: {product.get('product_type', 'General')}
 Price: {product['price']} PKR{discount_text}
 Description: {product.get('description', '')}
-Features:
+Features/Tags:
 {features_text}
 
 Explain this product in Roman Urdu like a friendly salesman. Highlight:
-1. Fabric/material quality
-2. Best use cases (occasion, season)
+1. Product quality and brand value
+2. Best use cases (occasion, season, gifting)
 3. Why it's worth buying
 4. Discount value (if any) - EXCITEDLY mention!
 5. End with "Add to Cart karein?" and emojis
@@ -400,8 +350,11 @@ Keep it under 150 words, exciting and persuasive."""
         compare = product.get("compare_at_price", "")
         discount = product.get("discount_percent", 0)
         desc = product.get("description", "")[:100]
+        ptype = product.get("product_type", "")
 
         msg = f"Yeh hamara {title} hai! "
+        if ptype:
+            msg += f"Category: {ptype}. "
         if desc:
             msg += f"{desc} "
 
@@ -454,35 +407,32 @@ ai_service = AIService(OPENAI_API_KEY)
 
 @app.get("/")
 async def root():
-    return {"message": "REZON AI VTON Engine Running", "version": "4.0.0", "status": "ok"}
+    return {"message": "REZON AI VTON Engine Running", "version": "5.0.0", "status": "ok"}
 
 @app.get("/api/categories")
 async def get_categories():
-    return {"success": True, "categories": CATEGORIES}
+    """Return REAL categories from store products"""
+    try:
+        categories = await shopify.get_categories()
+        return {"success": True, "categories": categories}
+    except Exception as e:
+        print(f"Categories error: {e}")
+        return {"success": False, "error": str(e), "categories": []}
 
 @app.post("/api/products")
 async def get_products(request: ProductFetchRequest):
+    """Return REAL products by category"""
     try:
-        products = await shopify.fetch_products(query=request.query, category=request.category, limit=request.limit)
+        products = await shopify.fetch_products_by_category(request.category, limit=request.limit)
         return {"success": True, "products": products, "category": request.category}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/product/explain")
 async def explain_product_endpoint(request: ProductFetchRequest):
+    """Get AI explanation for a specific product"""
     try:
-        products = await shopify.fetch_products(limit=50)
-        product = None
-        for p in products:
-            if p["id"] == request.product_id or p["handle"] == request.product_id:
-                product = p
-                break
-
-        if not product:
-            for p in MOCK_PRODUCTS:
-                if p["id"] == request.product_id or p["handle"] == request.product_id:
-                    product = p
-                    break
+        product = await shopify.get_product_by_id(request.product_id)
 
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
@@ -516,16 +466,13 @@ async def add_to_cart(request: AddToCartRequest):
                     "action": "checkout"
                 })
 
-        # Fallback
+        # Fallback: Direct Shopify cart URL
         variant_id = request.variant_id
         if variant_id.startswith("gid://"):
             variant_id = variant_id.split("/")[-1]
 
-        handle = ""
-        for p in MOCK_PRODUCTS:
-            if p["variant_id"] == request.variant_id or p["numeric_variant_id"] == variant_id:
-                handle = p["handle"]
-                break
+        product = await shopify.get_product_by_id(request.variant_id)
+        handle = product.get("handle", "") if product else ""
 
         cart_url = f"https://{SHOPIFY_SHOP_DOMAIN}/cart/add?id={variant_id}&quantity={request.quantity}"
         product_url = f"https://{SHOPIFY_SHOP_DOMAIN}/products/{handle}" if handle else cart_url
@@ -546,29 +493,30 @@ async def chat_simple(request: SimpleChatRequest):
     try:
         messages = [{"role": "user", "content": request.message}]
 
-        product_keywords = ["product", "buy", "price", "dress", "shirt", "wallet", "kapra", "cheez",
-                           "suit", "clothes", "fashion", "len", "lena", "purchase", "dikhao", "show",
-                           "lawn", "fabric", "perfume", "gift", "box", "wear", "unstitched", "dikhayo"]
+        product_keywords = ["product", "buy", "price", "watch", "watches", "men", "women", "perfume",
+                           "wallet", "kapra", "cheez", "suit", "clothes", "fashion", "len", "lena",
+                           "purchase", "dikhao", "show", "lawn", "fabric", "gift", "box", "wear",
+                           "unstitched", "dikhayo", "brand", "original"]
         needs_products = any(kw in request.message.lower() for kw in product_keywords)
 
         products = []
         if needs_products:
             try:
-                products = await shopify.fetch_products(limit=6)
+                products = await shopify.fetch_all_products(limit=6)
             except Exception as e:
-                products = MOCK_PRODUCTS[:6]
+                print("Product fetch error:", e)
 
         ai_response = await ai_service.chat_with_products(messages, products, force_products=needs_products and len(products) > 0)
 
         if needs_products:
             if len(products) == 0:
-                products = MOCK_PRODUCTS[:6]
+                products = []
 
             return JSONResponse(content={
                 "success": True,
                 "response": ai_response.get("text") or "Yeh hain hamare best products!",
                 "product_cards": products,
-                "quick_replies": ["Fabrics dekhein", "Wallets explore karein", "Perfumes check karein", "Discount code chahiye"],
+                "quick_replies": ["Categories dekhein", "Discount code chahiye", "New arrivals"],
                 "session_id": request.session_id
             })
 
@@ -576,7 +524,7 @@ async def chat_simple(request: SimpleChatRequest):
             "success": True,
             "response": ai_response.get("text") or "Main aapki madad karne ke liye tayyar hoon!",
             "product_cards": None,
-            "quick_replies": ["Products dekhein", "Styling tips chahiye", "Discount code"],
+            "quick_replies": ["Categories dekhein", "Styling tips chahiye", "Discount code"],
             "session_id": request.session_id
         })
 
