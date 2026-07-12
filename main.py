@@ -20,7 +20,7 @@ SHOPIFY_CLIENT_SECRET = os.getenv("SHOPIFY_CLIENT_SECRET", "")
 
 app = FastAPI(title="REZON AI VTON Engine", version="1.0.0")
 
-# ============ CORS - VERY PERMISSIVE FOR TESTING ============
+# ============ CORS ============
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -310,7 +310,6 @@ Always be concise but helpful."""
         formatted_messages = [{"role": "system", "content": system_prompt}]
 
         for msg in messages:
-            # Handle both dict and ChatMessage object
             if isinstance(msg, dict):
                 role = msg.get("role", "user")
                 content = msg.get("content", "")
@@ -362,53 +361,57 @@ Always be concise but helpful."""
             }
         ]
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                self.url,
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-                json={
-                    "model": "gpt-4o-mini",  # Using gpt-4o-mini for cost efficiency
-                    "messages": formatted_messages,
-                    "functions": functions,
-                    "function_call": "auto",
-                    "temperature": 0.7
-                }
-            )
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    self.url,
+                    headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                    json={
+                        "model": "gpt-4o-mini",
+                        "messages": formatted_messages,
+                        "functions": functions,
+                        "function_call": "auto",
+                        "temperature": 0.7
+                    },
+                    timeout=30.0
+                )
 
-        result = response.json()
+            result = response.json()
 
-        if "choices" not in result:
-            print("OpenAI error:", result)
-            return {"text": "Sorry, AI service temporarily unavailable. Please try again later.", "function_call": None, "product_cards": None}
+            if "choices" not in result:
+                print("OpenAI error response:", result)
+                return {"text": "Sorry, AI service temporarily unavailable. Please try again later.", "function_call": None, "product_cards": None}
 
-        message = result["choices"][0]["message"]
+            message = result["choices"][0]["message"]
 
-        response_data = {
-            "text": message.get("content", ""),
-            "function_call": None,
-            "product_cards": None
-        }
+            response_data = {
+                "text": message.get("content", ""),
+                "function_call": None,
+                "product_cards": None
+            }
 
-        if message.get("function_call"):
-            func_name = message["function_call"]["name"]
-            func_args = json.loads(message["function_call"]["arguments"])
-            response_data["function_call"] = {"name": func_name, "args": func_args}
+            if message.get("function_call"):
+                func_name = message["function_call"]["name"]
+                func_args = json.loads(message["function_call"]["arguments"])
+                response_data["function_call"] = {"name": func_name, "args": func_args}
 
-        return response_data
+            return response_data
+
+        except Exception as e:
+            print("OpenAI API error:", str(e))
+            return {"text": "Sorry, AI service mein masla hai. Thodi dair baad try karein.", "function_call": None, "product_cards": None}
 
 ai_service = AIService(OPENAI_API_KEY)
 
 # ============ API ROUTES ============
 
-# ====== SIMPLE CHAT (for basic frontend integration) ======
+# ====== SIMPLE CHAT ======
 @app.post("/api/chat-simple")
 async def chat_simple(request: SimpleChatRequest):
-    """Simple chat endpoint that accepts just a message string"""
     try:
         messages = [{"role": "user", "content": request.message}]
 
-        # Check if product-related keywords
-        product_keywords = ["product", "buy", "price", "dress", "shirt", "wallet", "kapra", "cheez", "suit", "clothes", "fashion"]
+        product_keywords = ["product", "buy", "price", "dress", "shirt", "wallet", "kapra", "cheez", "suit", "clothes", "fashion", "len", "lena", "purchase"]
         needs_products = any(kw in request.message.lower() for kw in product_keywords)
 
         products = None
@@ -421,30 +424,34 @@ async def chat_simple(request: SimpleChatRequest):
 
         ai_response = await ai_service.chat_with_products(messages, products)
 
-        if ai_response.get("function_call", {}).get("name") == "show_product_cards":
+        # SAFE check for function_call - handle None properly
+        func_call = ai_response.get("function_call")
+        if func_call and isinstance(func_call, dict) and func_call.get("name") == "show_product_cards":
             try:
-                product_ids = ai_response["function_call"]["args"]["product_ids"]
+                product_ids = func_call["args"]["product_ids"]
                 product_cards = await shopify.fetch_products(limit=len(product_ids))
                 ai_response["product_cards"] = product_cards
-                ai_response["text"] = ai_response["function_call"]["args"]["message"]
+                ai_response["text"] = func_call["args"]["message"]
             except Exception as e:
                 print("Product card fetch error:", e)
 
         return JSONResponse(content={
             "success": True,
-            "response": ai_response["text"] or "Main aapki madad karne ke liye tayyar hoon!",
+            "response": ai_response.get("text") or "Main aapki madad karne ke liye tayyar hoon!",
             "product_cards": ai_response.get("product_cards"),
             "session_id": request.session_id
         })
 
     except Exception as e:
         print("Chat error:", str(e))
+        import traceback
+        traceback.print_exc()
         return JSONResponse(
             status_code=500,
             content={"success": False, "response": "Kuch galat ho gaya. Dobara try karein.", "error": str(e)}
         )
 
-# ====== FULL CHAT (with message history) ======
+# ====== FULL CHAT ======
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
     try:
@@ -452,7 +459,7 @@ async def chat_endpoint(request: ChatRequest):
         for msg in request.messages:
             messages_dicts.append({"role": msg.role, "content": msg.content})
 
-        product_keywords = ["product", "buy", "price", "dress", "shirt", "wallet", "kapra", "cheez", "suit", "clothes", "fashion"]
+        product_keywords = ["product", "buy", "price", "dress", "shirt", "wallet", "kapra", "cheez", "suit", "clothes", "fashion", "len", "lena", "purchase"]
         needs_products = any(kw in request.messages[-1].content.lower() for kw in product_keywords)
 
         products = None
@@ -465,24 +472,27 @@ async def chat_endpoint(request: ChatRequest):
 
         ai_response = await ai_service.chat_with_products(messages_dicts, products)
 
-        if ai_response.get("function_call", {}).get("name") == "show_product_cards":
+        func_call = ai_response.get("function_call")
+        if func_call and isinstance(func_call, dict) and func_call.get("name") == "show_product_cards":
             try:
-                product_ids = ai_response["function_call"]["args"]["product_ids"]
+                product_ids = func_call["args"]["product_ids"]
                 product_cards = await shopify.fetch_products(limit=len(product_ids))
                 ai_response["product_cards"] = product_cards
-                ai_response["text"] = ai_response["function_call"]["args"]["message"]
+                ai_response["text"] = func_call["args"]["message"]
             except Exception as e:
                 print("Product card error:", e)
 
         return JSONResponse(content={
             "success": True,
-            "response": ai_response["text"] or "Main aapki madad karne ke liye tayyar hoon!",
+            "response": ai_response.get("text") or "Main aapki madad karne ke liye tayyar hoon!",
             "product_cards": ai_response.get("product_cards"),
             "session_id": request.session_id
         })
 
     except Exception as e:
         print("Chat error:", str(e))
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/products")
