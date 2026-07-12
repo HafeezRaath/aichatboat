@@ -27,7 +27,7 @@ print("  STOREFRONT_TOKEN set:", bool(SHOPIFY_STOREFRONT_ACCESS_TOKEN))
 print("  OPENAI_KEY set:", bool(OPENAI_API_KEY))
 print("=" * 60)
 
-app = FastAPI(title="REZON AI VTON Engine", version="6.0.0")
+app = FastAPI(title="REZON AI VTON Engine", version="6.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -136,6 +136,13 @@ class ShopifyClient:
         # Get all images
         images = [img.get("src") for img in p.get("images", []) if img.get("src")]
 
+        # Check availability from inventory
+        available = True
+        if p.get("variants"):
+            first_variant = p["variants"][0]
+            inventory_qty = first_variant.get("inventory_quantity", 0)
+            available = inventory_qty > 0
+
         return {
             "id": f"gid://shopify/Product/{p['id']}",
             "title": p["title"],
@@ -154,7 +161,7 @@ class ShopifyClient:
             "product_type": p.get("product_type", ""),
             "vendor": p.get("vendor", ""),
             "features": p.get("tags", [])[:4],
-            "available": p.get("variants", [{}])[0].get("inventory_quantity", 0) > 0 if p.get("variants") else True
+            "available": available
         }
 
     async def fetch_all_products(self, limit=50):
@@ -165,31 +172,46 @@ class ShopifyClient:
 
         url = f"{self.admin_rest_url}/products.json?limit={limit}&status=active"
 
+        print(f"🔍 Fetching products from: {url}")
+
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(url, headers=self.admin_headers, timeout=15.0)
 
+            print(f"📡 Admin API Status: {response.status_code}")
+
+            if response.status_code == 401:
+                print("❌ 401 Unauthorized - Token invalid or missing permissions")
+                return []
+            if response.status_code == 403:
+                print("❌ 403 Forbidden - Token lacks 'read_products' permission")
+                return []
             if response.status_code != 200:
-                print(f"❌ Admin API Error {response.status_code}: {response.text[:200]}")
+                print(f"❌ Error {response.status_code}: {response.text[:300]}")
                 return []
 
             data = response.json()
             products = data.get("products", [])
 
+            print(f"📦 Raw products count: {len(products)}")
+
             if not products:
-                print("⚠️ No products found in your Shopify store")
+                print("⚠️ No products found")
                 return []
 
             formatted = [self._format_product(p) for p in products]
             self._cached_products = formatted
 
-            print(f"✅ Fetched {len(formatted)} REAL products from your store!")
-            for p in formatted:
-                print(f"   - {p['title']} ({p['category']}) - Rs.{p['price']} - Available: {p['available']}")
+            print(f"✅ Formatted {len(formatted)} products")
+            for p in formatted[:3]:
+                print(f"   - {p['title']} | {p['category']} | Rs.{p['price']} | Available: {p['available']}")
+
             return formatted
 
         except Exception as e:
             print(f"❌ Admin API error: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     async def get_categories(self):
@@ -197,6 +219,7 @@ class ShopifyClient:
         products = await self.fetch_all_products(limit=50)
 
         if not products:
+            print("⚠️ No products to generate categories")
             return []
 
         # Group products by category
@@ -217,7 +240,6 @@ class ShopifyClient:
                     first_img = p["image_url"]
                     break
 
-            # Category display name mapping
             display_names = {
                 "womens": "Women's Collection",
                 "mens": "Men's Collection",
@@ -416,7 +438,78 @@ ai_service = AIService(OPENAI_API_KEY)
 
 @app.get("/")
 async def root():
-    return {"message": "REZON AI VTON Engine Running", "version": "6.0.0", "status": "ok"}
+    return {"message": "REZON AI VTON Engine Running", "version": "6.1.0", "status": "ok"}
+
+# ============ DEBUG ENDPOINTS ============
+
+@app.get("/api/debug/config")
+async def debug_config():
+    """Check if config is loaded properly"""
+    return {
+        "shop_domain": SHOPIFY_SHOP_DOMAIN,
+        "admin_token_set": bool(SHOPIFY_ADMIN_API_TOKEN),
+        "admin_token_prefix": SHOPIFY_ADMIN_API_TOKEN[:10] + "..." if SHOPIFY_ADMIN_API_TOKEN else None,
+        "storefront_token_set": bool(SHOPIFY_STOREFRONT_ACCESS_TOKEN),
+        "openai_key_set": bool(OPENAI_API_KEY)
+    }
+
+@app.get("/api/debug/test-admin")
+async def test_admin_api():
+    """Test Admin API connection"""
+    if not SHOPIFY_ADMIN_API_TOKEN:
+        return {"success": False, "error": "Admin token not set"}
+
+    url = f"https://{SHOPIFY_SHOP_DOMAIN}/admin/api/2024-07/products.json?limit=1"
+    headers = {
+        "X-Shopify-Access-Token": SHOPIFY_ADMIN_API_TOKEN,
+        "Content-Type": "application/json"
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers, timeout=15.0)
+
+        return {
+            "success": response.status_code == 200,
+            "status_code": response.status_code,
+            "response_preview": response.text[:500] if response.text else "Empty",
+            "headers": dict(response.headers)
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/debug/shop-info")
+async def shop_info():
+    """Get shop info to verify domain"""
+    if not SHOPIFY_ADMIN_API_TOKEN:
+        return {"success": False, "error": "Admin token not set"}
+
+    url = f"https://{SHOPIFY_SHOP_DOMAIN}/admin/api/2024-07/shop.json"
+    headers = {
+        "X-Shopify-Access-Token": SHOPIFY_ADMIN_API_TOKEN,
+        "Content-Type": "application/json"
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers, timeout=15.0)
+
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                "success": True,
+                "shop": data.get("shop", {})
+            }
+        else:
+            return {
+                "success": False,
+                "status_code": response.status_code,
+                "error": response.text[:200]
+            }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# ============ MAIN ENDPOINTS ============
 
 @app.get("/api/categories")
 async def get_categories():
@@ -426,6 +519,8 @@ async def get_categories():
         return {"success": True, "categories": categories}
     except Exception as e:
         print(f"Categories error: {e}")
+        import traceback
+        traceback.print_exc()
         return {"success": False, "error": str(e), "categories": []}
 
 @app.post("/api/products")
