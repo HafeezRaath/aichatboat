@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import json
 import os
+import re
 import base64
 import uuid
 from datetime import datetime, timedelta
@@ -18,8 +19,6 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 SHOPIFY_CLIENT_ID = os.getenv("SHOPIFY_CLIENT_ID", "")
 SHOPIFY_CLIENT_SECRET = os.getenv("SHOPIFY_CLIENT_SECRET", "")
 
-# DO NOT auto-append .myshopify.com - user has custom domain
-# Just ensure no trailing slash
 SHOPIFY_SHOP_DOMAIN = SHOPIFY_SHOP_DOMAIN.rstrip('/')
 
 print("=" * 60)
@@ -30,7 +29,7 @@ print("  STOREFRONT_TOKEN set:", bool(SHOPIFY_STOREFRONT_ACCESS_TOKEN))
 print("  OPENAI_KEY set:", bool(OPENAI_API_KEY))
 print("=" * 60)
 
-app = FastAPI(title="REZON AI VTON Engine", version="2.0.0")
+app = FastAPI(title="REZON AI VTON Engine", version="4.0.0")
 
 # ============ CORS ============
 app.add_middleware(
@@ -41,165 +40,146 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ============ REAL IMAGE MOCK PRODUCTS (Beautiful Fallback) ============
+# ============ CATEGORIES ============
+CATEGORIES = [
+    {
+        "id": "unstitched",
+        "name": "Unstitched Fabric",
+        "name_urdu": "Unstitched Fabric",
+        "image": "https://images.unsplash.com/photo-1596755094514-f87e34085b2c?w=400&h=400&fit=crop",
+        "description": "Premium cotton, lawn, and wash & wear fabrics"
+    },
+    {
+        "id": "perfumes",
+        "name": "Perfumes",
+        "name_urdu": "Perfumes",
+        "image": "https://images.unsplash.com/photo-1541643600914-78a084cdc566?w=400&h=400&fit=crop",
+        "description": "Luxury oud and premium fragrances"
+    },
+    {
+        "id": "wallets",
+        "name": "Wallets",
+        "name_urdu": "Wallets",
+        "image": "https://images.unsplash.com/photo-1627123424574-724758594e93?w=400&h=400&fit=crop",
+        "description": "Genuine leather wallets and card holders"
+    },
+    {
+        "id": "gifts",
+        "name": "Gift Boxes",
+        "name_urdu": "Gift Boxes",
+        "image": "https://images.unsplash.com/photo-1512909006721-3d6018887383?w=400&h=400&fit=crop",
+        "description": "Curated gift sets for special occasions"
+    }
+]
+
+# ============ MOCK PRODUCTS (Real Images) ============
 MOCK_PRODUCTS = [
     {
         "id": "gid://shopify/Product/1",
         "title": "Premium Grey Unstitched Suit",
-        "description": "High quality unstitched fabric perfect for summer suits. Soft cotton blend with elegant texture.",
+        "description": "High quality unstitched fabric perfect for summer suits. Soft cotton blend with elegant texture. 4.5 meter cutting with matching dupatta piece.",
         "handle": "premium-unstitched-fabric-grey",
         "price": "5990.00",
         "compare_at_price": "7500.00",
         "currency": "PKR",
         "image_url": "https://images.unsplash.com/photo-1596755094514-f87e34085b2c?w=400&h=400&fit=crop",
-        "variant_id": "gid://shopify/ProductVariant/1"
+        "variant_id": "gid://shopify/ProductVariant/1",
+        "numeric_variant_id": "1",
+        "category": "unstitched",
+        "tags": ["unstitched", "cotton", "summer", "grey"],
+        "discount_percent": 20,
+        "features": ["Pure cotton blend", "4.5 meter suit cutting", "Soft & breathable", "Easy to stitch"]
     },
     {
         "id": "gid://shopify/Product/2",
         "title": "Classic Black Wash & Wear",
-        "description": "Easy maintenance wash and wear fabric. Perfect for daily office wear and formal occasions.",
+        "description": "Easy maintenance wash and wear fabric. Perfect for daily office wear and formal occasions. Wrinkle-free technology.",
         "handle": "wash-wear-black",
         "price": "4950.00",
         "compare_at_price": "6200.00",
         "currency": "PKR",
         "image_url": "https://images.unsplash.com/photo-1594938298603-c8148c4dae35?w=400&h=400&fit=crop",
-        "variant_id": "gid://shopify/ProductVariant/2"
+        "variant_id": "gid://shopify/ProductVariant/2",
+        "numeric_variant_id": "2",
+        "category": "unstitched",
+        "tags": ["wash-wear", "formal", "black", "wrinkle-free"],
+        "discount_percent": 20,
+        "features": ["Wrinkle-free fabric", "No ironing needed", "4 meter cutting", "Office wear perfect"]
     },
     {
         "id": "gid://shopify/Product/3",
         "title": "Summer Floral Lawn Collection",
-        "description": "Breathable lawn fabric with beautiful floral print. Ideal for hot summer days.",
+        "description": "Breathable lawn fabric with beautiful floral print. Ideal for hot summer days. Digital print with color guarantee.",
         "handle": "summer-lawn-collection-floral",
         "price": "3990.00",
         "compare_at_price": "5500.00",
         "currency": "PKR",
         "image_url": "https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?w=400&h=400&fit=crop",
-        "variant_id": "gid://shopify/ProductVariant/3"
+        "variant_id": "gid://shopify/ProductVariant/3",
+        "numeric_variant_id": "3",
+        "category": "unstitched",
+        "tags": ["lawn", "floral", "summer", "digital-print"],
+        "discount_percent": 27,
+        "features": ["Digital floral print", "Color fast guarantee", "Soft lawn fabric", "2 piece suit"]
     },
     {
         "id": "gid://shopify/Product/4",
         "title": "Luxury Oud Perfume Collection",
-        "description": "Premium oud fragrance with long lasting scent. Perfect for special occasions.",
+        "description": "Premium oud fragrance with long lasting scent. Perfect for special occasions. 100ml bottle with 24hr lasting power.",
         "handle": "luxury-perfume-oud",
         "price": "8500.00",
         "compare_at_price": "12000.00",
         "currency": "PKR",
         "image_url": "https://images.unsplash.com/photo-1541643600914-78a084cdc566?w=400&h=400&fit=crop",
-        "variant_id": "gid://shopify/ProductVariant/4"
+        "variant_id": "gid://shopify/ProductVariant/4",
+        "numeric_variant_id": "4",
+        "category": "perfumes",
+        "tags": ["perfume", "oud", "luxury", "100ml"],
+        "discount_percent": 29,
+        "features": ["Pure oud extract", "24 hours lasting", "100ml premium bottle", "Gift packaging"]
     },
     {
         "id": "gid://shopify/Product/5",
         "title": "Genuine Brown Leather Wallet",
-        "description": "Genuine leather wallet with multiple card slots and coin pocket. Premium quality stitching.",
+        "description": "Genuine leather wallet with multiple card slots and coin pocket. Premium quality stitching. RFID protected.",
         "handle": "leather-wallet-brown",
         "price": "2950.00",
         "compare_at_price": "4200.00",
         "currency": "PKR",
         "image_url": "https://images.unsplash.com/photo-1627123424574-724758594e93?w=400&h=400&fit=crop",
-        "variant_id": "gid://shopify/ProductVariant/5"
+        "variant_id": "gid://shopify/ProductVariant/5",
+        "numeric_variant_id": "5",
+        "category": "wallets",
+        "tags": ["wallet", "leather", "brown", "rfid"],
+        "discount_percent": 30,
+        "features": ["100% genuine leather", "RFID protection", "8 card slots", "Coin pocket included"]
     },
     {
         "id": "gid://shopify/Product/6",
         "title": "Elegant Gift Box Set",
-        "description": "Premium gift box with curated items. Perfect for birthdays, weddings, and special events.",
+        "description": "Premium gift box with curated items. Perfect for birthdays, weddings, and special events. Includes wallet + perfume + keychain.",
         "handle": "elegant-gift-box-set",
         "price": "4500.00",
         "compare_at_price": "6000.00",
         "currency": "PKR",
         "image_url": "https://images.unsplash.com/photo-1512909006721-3d6018887383?w=400&h=400&fit=crop",
-        "variant_id": "gid://shopify/ProductVariant/6"
+        "variant_id": "gid://shopify/ProductVariant/6",
+        "numeric_variant_id": "6",
+        "category": "gifts",
+        "tags": ["gift", "box", "premium", "combo"],
+        "discount_percent": 25,
+        "features": ["Wallet + Perfume + Keychain", "Premium gift packaging", "Ready to gift", "Best value combo"]
     }
 ]
 
 # ============ ROOT / HEALTH ============
 @app.get("/")
 async def root():
-    return {"message": "REZON AI VTON Engine Running", "version": "2.0.0", "status": "ok"}
+    return {"message": "REZON AI VTON Engine Running", "version": "4.0.0", "status": "ok"}
 
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
-
-# ============ AUTO GENERATE STOREFRONT TOKEN ============
-@app.get("/api/get-storefront-token")
-async def get_storefront_token():
-    """Auto-generate Storefront token using Admin API"""
-    if not SHOPIFY_ADMIN_API_TOKEN:
-        raise HTTPException(status_code=400, detail="SHOPIFY_ADMIN_API_TOKEN not configured")
-    
-    url = f"https://{SHOPIFY_SHOP_DOMAIN}/admin/api/2024-07/storefront_access_tokens.json"
-    headers = {
-        "X-Shopify-Access-Token": SHOPIFY_ADMIN_API_TOKEN,
-        "Content-Type": "application/json"
-    }
-    data = {
-        "storefront_access_token": {
-            "title": "REZON AI Chatbot"
-        }
-    }
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, json=data, headers=headers, timeout=10.0)
-        
-        if response.status_code == 201:
-            token_data = response.json().get("storefront_access_token", {})
-            return {
-                "success": True,
-                "access_token": token_data.get("access_token"),
-                "title": token_data.get("title"),
-                "message": "Token generated! Add SHOPIFY_STOREFRONT_ACCESS_TOKEN to Railway variables."
-            }
-        elif response.status_code == 200:
-            # Token might already exist, list them
-            list_resp = await client.get(url, headers=headers, timeout=10.0)
-            tokens = list_resp.json().get("storefront_access_tokens", [])
-            if tokens:
-                return {
-                    "success": True,
-                    "access_token": tokens[0].get("access_token"),
-                    "title": tokens[0].get("title"),
-                    "message": "Existing token found! Add SHOPIFY_STOREFRONT_ACCESS_TOKEN to Railway variables."
-                }
-            else:
-                return {"success": False, "error": "Could not generate token", "status": response.status_code}
-        else:
-            return {"success": False, "error": response.text, "status": response.status_code}
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ============ SHOPIFY OAUTH ============
-@app.get("/auth/callback")
-async def shopify_callback(request: Request):
-    code = request.query_params.get("code")
-    shop = request.query_params.get("shop")
-    if not code or not shop:
-        return {"error": "Missing code or shop"}
-
-    token_url = f"https://{shop}/admin/oauth/access_token"
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            token_url,
-            json={
-                "client_id": SHOPIFY_CLIENT_ID,
-                "client_secret": SHOPIFY_CLIENT_SECRET,
-                "code": code
-            }
-        )
-        data = response.json()
-
-    access_token = data.get("access_token")
-    print("=" * 60)
-    print("SHOPIFY ACCESS TOKEN:", access_token)
-    print("=" * 60)
-
-    return {
-        "success": True,
-        "token": access_token,
-        "shop": shop,
-        "message": "Token captured! Copy this token to Railway variables."
-    }
 
 # ============ MODELS ============
 class ChatMessage(BaseModel):
@@ -231,11 +211,23 @@ class VTONRequest(BaseModel):
 class ProductFetchRequest(BaseModel):
     query: Optional[str] = None
     product_id: Optional[str] = None
-    limit: int = 5
+    category: Optional[str] = None
+    limit: int = 10
 
 class AddToCartRequest(BaseModel):
     variant_id: str
     quantity: int = 1
+
+class CategoryRequest(BaseModel):
+    category_id: Optional[str] = None
+
+# ============ HTML STRIPPER ============
+def strip_html(html_text):
+    if not html_text:
+        return ""
+    clean = re.sub(r'<[^>]+>', '', html_text)
+    clean = re.sub(r'\s+', ' ', clean).strip()
+    return clean
 
 # ============ SHOPIFY CLIENT ============
 class ShopifyClient:
@@ -253,183 +245,120 @@ class ShopifyClient:
             "X-Shopify-Storefront-Access-Token": storefront_token
         }
 
-    async def fetch_products_admin_rest(self, query: str = None, limit: int = 5) -> List[Dict]:
-        """Fetch products using Admin REST API - NO Storefront token needed!"""
+    def _calculate_discount(self, price_str, compare_str):
+        try:
+            price = float(price_str)
+            compare = float(compare_str) if compare_str else 0
+            if compare > price:
+                return round(((compare - price) / compare) * 100)
+        except:
+            pass
+        return 0
+
+    def _format_product(self, p: dict, category: str = None) -> dict:
+        """Format a product with all needed fields"""
+        variant = p["variants"][0] if p.get("variants") else {}
+        image = p["images"][0] if p.get("images") else {}
+
+        price = variant.get("price", "0.00")
+        compare = variant.get("compare_at_price")
+        discount = self._calculate_discount(price, compare)
+
+        variant_id_num = variant.get("id")
+        variant_id_gid = f"gid://shopify/ProductVariant/{variant_id_num}" if variant_id_num else None
+
+        # Determine category from tags/type
+        tags = p.get("tags", [])
+        product_type = p.get("product_type", "").lower()
+        prod_category = category or "general"
+
+        if any(t in ["perfume", "oud", "fragrance"] for t in [product_type] + [t.lower() for t in tags]):
+            prod_category = "perfumes"
+        elif any(t in ["wallet", "leather"] for t in [product_type] + [t.lower() for t in tags]):
+            prod_category = "wallets"
+        elif any(t in ["gift", "box", "combo"] for t in [product_type] + [t.lower() for t in tags]):
+            prod_category = "gifts"
+        elif any(t in ["fabric", "unstitched", "lawn", "cotton"] for t in [product_type] + [t.lower() for t in tags]):
+            prod_category = "unstitched"
+
+        return {
+            "id": f"gid://shopify/Product/{p['id']}",
+            "title": p["title"],
+            "description": strip_html(p.get("body_html", ""))[:300],
+            "handle": p["handle"],
+            "price": price,
+            "compare_at_price": compare,
+            "currency": "PKR",
+            "image_url": image.get("src") if image else None,
+            "variant_id": variant_id_gid,
+            "numeric_variant_id": str(variant_id_num) if variant_id_num else None,
+            "category": prod_category,
+            "tags": p.get("tags", []),
+            "discount_percent": discount,
+            "product_type": p.get("product_type", ""),
+            "vendor": p.get("vendor", ""),
+            "features": p.get("tags", [])[:4]  # Use tags as features fallback
+        }
+
+    async def fetch_products_admin_rest(self, query: str = None, category: str = None, limit: int = 10) -> List[Dict]:
+        """Fetch REAL products from Shopify using Admin REST API"""
         if not self.admin_headers["X-Shopify-Access-Token"]:
-            print("WARNING: Admin token not set")
+            print("❌ ADMIN TOKEN NOT SET")
             return []
 
-        url = f"{self.admin_rest_url}/products.json?limit={limit}&status=active&fields=id,title,body_html,handle,variants,images"
+        url = f"{self.admin_rest_url}/products.json?limit={limit}&status=active"
         if query:
             url += f"&title={query}"
 
-        try:
-            print(f"Fetching products via Admin REST API: {url}")
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, headers=self.admin_headers, timeout=10.0)
+        print(f"🔍 Fetching real products: {url}")
 
-            print(f"Admin API Status: {response.status_code}")
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=self.admin_headers, timeout=15.0)
+
+            print(f"📡 Admin API Status: {response.status_code}")
 
             if response.status_code != 200:
-                print(f"Admin API error: {response.text}")
+                print(f"❌ Admin API Error: {response.text[:200]}")
                 return []
 
             data = response.json()
             products = data.get("products", [])
 
             if not products:
-                print("No products found via Admin API")
+                print("⚠️ No products found in your Shopify store")
                 return []
 
-            formatted = []
-            for p in products:
-                variant = p["variants"][0] if p.get("variants") else {}
-                image = p["images"][0] if p.get("images") else {}
+            formatted = [self._format_product(p, category) for p in products]
 
-                formatted.append({
-                    "id": f"gid://shopify/Product/{p['id']}",
-                    "title": p["title"],
-                    "description": p.get("body_html", "").replace("<br>", "\n").replace("<p>", "").replace("</p>", "")[:200],
-                    "handle": p["handle"],
-                    "price": variant.get("price", "0.00"),
-                    "compare_at_price": variant.get("compare_at_price"),
-                    "currency": "PKR",
-                    "image_url": image.get("src") if image else None,
-                    "variant_id": f"gid://shopify/ProductVariant/{variant['id']}" if variant else None
-                })
+            # Filter by category if specified
+            if category:
+                formatted = [p for p in formatted if p["category"] == category]
 
-            print(f"Successfully fetched {len(formatted)} products via Admin REST API")
+            print(f"✅ Fetched {len(formatted)} REAL products!")
             return formatted
 
         except Exception as e:
-            print(f"Admin REST API error: {e}")
+            print(f"❌ Admin REST API error: {e}")
             return []
 
-    async def fetch_products_storefront(self, query: str = None, limit: int = 5) -> List[Dict]:
-        """Fetch products using Storefront GraphQL API"""
-        if not self.storefront_headers["X-Shopify-Storefront-Access-Token"]:
-            print("WARNING: SHOPIFY_STOREFRONT_ACCESS_TOKEN not set.")
-            return []
-
-        search_query = f"title:*{query}*" if query else ""
-
-        graphql_query = """
-        query getProducts($query: String, $limit: Int!) {
-            products(first: $limit, query: $query) {
-                edges {
-                    node {
-                        id
-                        title
-                        description
-                        handle
-                        priceRange {
-                            minVariantPrice {
-                                amount
-                                currencyCode
-                            }
-                        }
-                        images(first: 1) {
-                            edges {
-                                node {
-                                    url
-                                    altText
-                                }
-                            }
-                        }
-                        variants(first: 1) {
-                            edges {
-                                node {
-                                    id
-                                    price {
-                                        amount
-                                        currencyCode
-                                    }
-                                    compareAtPrice {
-                                        amount
-                                        currencyCode
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        """
-
-        variables = {"query": search_query, "limit": limit}
-
-        try:
-            print(f"Fetching products from Storefront: {self.storefront_url}")
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    self.storefront_url,
-                    headers=self.storefront_headers,
-                    json={"query": graphql_query, "variables": variables},
-                    timeout=10.0
-                )
-
-                print(f"Storefront API Status: {response.status_code}")
-
-                if response.text.strip().startswith('<') or not response.text.strip():
-                    print("ERROR: Storefront returned HTML/empty response")
-                    return []
-
-                data = response.json()
-
-            if "errors" in data:
-                print("Storefront GraphQL errors:", data["errors"])
-                return []
-
-            products = []
-            edges = data.get("data", {}).get("products", {}).get("edges", [])
-
-            for edge in edges:
-                node = edge["node"]
-                variant = node["variants"]["edges"][0]["node"] if node["variants"]["edges"] else None
-                image = node["images"]["edges"][0]["node"] if node["images"]["edges"] else None
-
-                products.append({
-                    "id": node["id"],
-                    "title": node["title"],
-                    "description": node.get("description", ""),
-                    "handle": node["handle"],
-                    "price": variant["price"]["amount"] if variant else "0.00",
-                    "compare_at_price": variant["compareAtPrice"]["amount"] if variant and variant.get("compareAtPrice") else None,
-                    "currency": variant["price"]["currencyCode"] if variant else "PKR",
-                    "image_url": image["url"] if image else "",
-                    "variant_id": variant["id"] if variant else None
-                })
-
-            print(f"Successfully fetched {len(products)} products via Storefront")
-            return products
-
-        except Exception as e:
-            print(f"Storefront API error: {e}")
-            return []
-
-    async def fetch_products(self, query: str = None, limit: int = 5) -> List[Dict]:
-        """Smart fetch: Try Storefront first, fallback to Admin REST, then Mock"""
-        # Try Storefront first if token available
-        if self.storefront_headers["X-Shopify-Storefront-Access-Token"]:
-            products = await self.fetch_products_storefront(query, limit)
-            if products:
-                return products
-
-        # Fallback to Admin REST API (works with Admin token!)
+    async def fetch_products(self, query: str = None, category: str = None, limit: int = 10) -> List[Dict]:
+        """Smart fetch: Try REAL store products first, fallback to mock"""
         if self.admin_headers["X-Shopify-Access-Token"]:
-            products = await self.fetch_products_admin_rest(query, limit)
+            products = await self.fetch_products_admin_rest(query, category, limit)
             if products:
                 return products
 
-        # Ultimate fallback: Mock products with real images
-        print("WARNING: Using mock products with real images")
-        return MOCK_PRODUCTS[:limit]
+        # Fallback to mock products
+        print("⚠️ Using MOCK products")
+        products = MOCK_PRODUCTS
+        if category:
+            products = [p for p in products if p.get("category") == category]
+        return products[:limit]
 
     async def create_cart(self, variant_id: str, quantity: int = 1) -> Dict:
-        """Create cart via Storefront API"""
         if not self.storefront_headers["X-Shopify-Storefront-Access-Token"]:
-            return {"error": "No storefront token - cannot create cart"}
+            return {"error": "No storefront token"}
 
         mutation = """
         mutation cartCreate($input: CartInput!) {
@@ -465,75 +394,6 @@ class ShopifyClient:
             print(f"Error creating cart: {e}")
             return {"error": str(e)}
 
-    async def create_discount_code(self, percentage: float = 5.0, prefix: str = "AI") -> Dict:
-        code = f"{prefix}{uuid.uuid4().hex[:6].upper()}"
-
-        mutation = """
-        mutation discountCodeBasicCreate($basicCodeDiscount: DiscountCodeBasicInput!) {
-            discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {
-                codeDiscountNode {
-                    id
-                    codeDiscount {
-                        ... on DiscountCodeBasic {
-                            title
-                            codes(first: 1) {
-                                edges {
-                                    node {
-                                        code
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                userErrors {
-                    field
-                    message
-                }
-            }
-        }
-        """
-
-        variables = {
-            "basicCodeDiscount": {
-                "title": f"AI Generated {percentage}% Off",
-                "code": code,
-                "startsAt": datetime.utcnow().isoformat() + "Z",
-                "endsAt": (datetime.utcnow() + timedelta(days=7)).isoformat() + "Z",
-                "customerSelection": {"all": True},
-                "customerGets": {
-                    "value": {"percentage": percentage},
-                    "items": {"all": True}
-                },
-                "usageLimit": 1
-            }
-        }
-
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    self.admin_url,
-                    headers=self.admin_headers,
-                    json={"query": mutation, "variables": variables},
-                    timeout=10.0
-                )
-                data = response.json()
-
-            if data.get("data", {}).get("discountCodeBasicCreate", {}).get("userErrors"):
-                errors = data["data"]["discountCodeBasicCreate"]["userErrors"]
-                raise HTTPException(status_code=400, detail=errors)
-
-            discount_node = data["data"]["discountCodeBasicCreate"]["codeDiscountNode"]
-            return {
-                "code": code,
-                "percentage": percentage,
-                "discount_id": discount_node["id"],
-                "expires_at": variables["basicCodeDiscount"]["endsAt"]
-            }
-        except Exception as e:
-            print(f"Error creating discount: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
-
 shopify = ShopifyClient(SHOPIFY_SHOP_DOMAIN, SHOPIFY_ADMIN_API_TOKEN, SHOPIFY_STOREFRONT_ACCESS_TOKEN)
 
 # ============ AI SERVICE ============
@@ -542,46 +402,102 @@ class AIService:
         self.api_key = api_key
         self.url = "https://api.openai.com/v1/chat/completions"
 
+    def _build_product_detail_prompt(self, product: Dict) -> str:
+        """Build rich product explanation prompt"""
+        features = product.get("features", [])
+        features_text = "\n".join([f"- {f}" for f in features]) if features else ""
+
+        discount_text = ""
+        if product.get("discount_percent", 0) > 0:
+            discount_text = f"\n🔥 SPECIAL OFFER: {product['discount_percent']}% OFF! Original price {product.get('compare_at_price', '')} PKR, now only {product['price']} PKR!"
+
+        return f"""Product: {product['title']}
+Price: {product['price']} PKR{discount_text}
+Description: {product.get('description', '')}
+Features:
+{features_text}
+
+Explain this product in Roman Urdu like a friendly salesman. Highlight:
+1. Fabric/material quality
+2. Best use cases (occasion, season)
+3. Why it's worth buying
+4. Discount value (if any)
+5. End with "Add to Cart karein?" and emojis
+
+Keep it under 150 words, exciting and persuasive."""
+
+    async def explain_product(self, product: Dict) -> str:
+        """Get AI explanation for a specific product"""
+        prompt = self._build_product_detail_prompt(product)
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    self.url,
+                    headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                    json={
+                        "model": "gpt-4o-mini",
+                        "messages": [
+                            {"role": "system", "content": "You are REZON AI, a premium fashion assistant. Speak in Roman Urdu (Hinglish). Be friendly, persuasive, and concise."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "temperature": 0.7,
+                        "max_tokens": 300
+                    },
+                    timeout=15.0
+                )
+
+            result = response.json()
+            if "choices" in result:
+                return result["choices"][0]["message"].get("content", "")
+            return self._fallback_explanation(product)
+
+        except Exception as e:
+            print(f"AI explain error: {e}")
+            return self._fallback_explanation(product)
+
+    def _fallback_explanation(self, product: Dict) -> str:
+        """Fallback explanation if AI fails"""
+        title = product.get("title", "")
+        price = product.get("price", "")
+        compare = product.get("compare_at_price", "")
+        discount = product.get("discount_percent", 0)
+        desc = product.get("description", "")[:100]
+
+        msg = f"Yeh hamara {title} hai! "
+        if desc:
+            msg += f"{desc} "
+
+        if discount > 0 and compare:
+            msg += f"🔥 Abhi {discount}% OFF par mil raha hai! Sirf {price} PKR (was {compare} PKR). "
+        else:
+            msg += f"Price sirf {price} PKR. "
+
+        msg += "Quality bohat zabardast hai. Add to Cart karein? 🛒"
+        return msg
+
     async def chat_with_products(self, messages: List[Dict], products: List[Dict] = None, force_products: bool = False) -> Dict:
-        system_prompt = """You are REZON AI, a premium fashion assistant for a Shopify store called REZON. 
-You help customers find products, provide styling advice, and recommend items from the store.
-
-IMPORTANT RULES:
-1. Always respond in Roman Urdu (Hinglish) if the customer uses it
-2. When customer asks about products, ALWAYS use the show_products function
-3. Be friendly, conversational, and helpful
-4. Keep responses concise but informative
-5. If products are available, mention them and offer to show them
-
-Available product categories: Unstitched Fabric, Wash & Wear, Perfumes, Wallets, Gift Boxes"""
+        system_prompt = """You are REZON AI, a premium fashion assistant for REZON store. 
+Speak in Roman Urdu (Hinglish) when customer uses it.
+Be friendly, concise, and helpful."""
 
         formatted_messages = [{"role": "system", "content": system_prompt}]
-
         for msg in messages:
             if isinstance(msg, dict):
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
+                formatted_messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
             else:
-                role = msg.role
-                content = msg.content
-
-            if products and role == "user":
-                content += f"\n\nAvailable Products: {json.dumps(products)}"
-            formatted_messages.append({"role": role, "content": content})
+                formatted_messages.append({"role": msg.role, "content": msg.content})
 
         tools = [
             {
                 "type": "function",
                 "function": {
                     "name": "show_products",
-                    "description": "Show product cards to the user when they express interest in products, want to buy something, or ask what products are available",
+                    "description": "Show product cards to the user",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "message": {
-                                "type": "string",
-                                "description": "Friendly message in Roman Urdu to accompany the products"
-                            }
+                            "message": {"type": "string", "description": "Message in Roman Urdu"}
                         },
                         "required": ["message"]
                     }
@@ -599,36 +515,141 @@ Available product categories: Unstitched Fabric, Wash & Wear, Perfumes, Wallets,
                         "messages": formatted_messages,
                         "tools": tools,
                         "tool_choice": "auto" if not force_products else {"type": "function", "function": {"name": "show_products"}},
-                        "temperature": 0.7
+                        "temperature": 0.7,
+                        "max_tokens": 500
                     },
-                    timeout=30.0
+                    timeout=20.0
                 )
 
             result = response.json()
-
             if "choices" not in result:
-                print("OpenAI error response:", result)
-                return {"text": "Sorry, AI service temporarily unavailable. Please try again later.", "tool_calls": None}
+                return {"text": "Sorry, AI service temporarily unavailable.", "tool_calls": None}
 
             message = result["choices"][0]["message"]
-
-            response_data = {
+            return {
                 "text": message.get("content", ""),
-                "tool_calls": None
+                "tool_calls": message.get("tool_calls")
             }
 
-            if message.get("tool_calls"):
-                response_data["tool_calls"] = message["tool_calls"]
-
-            return response_data
-
         except Exception as e:
-            print("OpenAI API error:", str(e))
-            return {"text": "Sorry, AI service mein masla hai. Thodi dair baad try karein.", "tool_calls": None}
+            print("OpenAI error:", str(e))
+            return {"text": "Sorry, AI service mein masla hai.", "tool_calls": None}
 
 ai_service = AIService(OPENAI_API_KEY)
 
 # ============ API ROUTES ============
+
+# ====== GET CATEGORIES ======
+@app.get("/api/categories")
+async def get_categories():
+    return {
+        "success": True,
+        "categories": CATEGORIES
+    }
+
+# ====== GET PRODUCTS BY CATEGORY ======
+@app.post("/api/products")
+async def get_products(request: ProductFetchRequest):
+    try:
+        products = await shopify.fetch_products(
+            query=request.query,
+            category=request.category,
+            limit=request.limit
+        )
+        return {
+            "success": True,
+            "products": products,
+            "category": request.category
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ====== GET PRODUCT DETAIL (AI EXPLANATION) ======
+@app.post("/api/product/explain")
+async def explain_product_endpoint(request: ProductFetchRequest):
+    try:
+        # Find product
+        products = await shopify.fetch_products(limit=50)
+        product = None
+        for p in products:
+            if p["id"] == request.product_id or p["handle"] == request.product_id:
+                product = p
+                break
+
+        if not product:
+            # Try mock products
+            for p in MOCK_PRODUCTS:
+                if p["id"] == request.product_id or p["handle"] == request.product_id:
+                    product = p
+                    break
+
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        # Get AI explanation
+        explanation = await ai_service.explain_product(product)
+
+        return {
+            "success": True,
+            "product": product,
+            "explanation": explanation,
+            "quick_replies": ["Add to Cart", "Aur products dekhein", "Discount code chahiye", "Styling tips"]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ====== ADD TO CART ======
+@app.post("/api/cart/add")
+async def add_to_cart(request: AddToCartRequest):
+    try:
+        # Try Storefront cart first
+        result = await shopify.create_cart(request.variant_id, request.quantity)
+
+        if "error" not in result:
+            cart_data = result.get("data", {}).get("cartCreate", {})
+            cart = cart_data.get("cart", {})
+            if cart.get("checkoutUrl"):
+                return JSONResponse(content={
+                    "success": True,
+                    "cart_id": cart.get("id"),
+                    "checkout_url": cart.get("checkoutUrl"),
+                    "message": "Product cart mein add ho gaya! Checkout karein.",
+                    "action": "checkout"
+                })
+
+        # Fallback: Direct Shopify cart URL
+        variant_id = request.variant_id
+        if variant_id.startswith("gid://"):
+            variant_id = variant_id.split("/")[-1]
+
+        # Find product handle
+        handle = ""
+        for p in MOCK_PRODUCTS:
+            if p["variant_id"] == request.variant_id or p["numeric_variant_id"] == variant_id:
+                handle = p["handle"]
+                break
+
+        # Direct cart add URL (works on all Shopify stores!)
+        cart_url = f"https://{SHOPIFY_SHOP_DOMAIN}/cart/add?id={variant_id}&quantity={request.quantity}"
+
+        # Alternative: Product page
+        product_url = f"https://{SHOPIFY_SHOP_DOMAIN}/products/{handle}" if handle else cart_url
+
+        return JSONResponse(content={
+            "success": True,
+            "checkout_url": cart_url,
+            "product_url": product_url,
+            "message": "✅ Product cart mein add ho gaya! Neeche diye gaye button se checkout karein.",
+            "action": "cart"
+        })
+
+    except Exception as e:
+        print("Cart error:", str(e))
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": "Cart add failed", "error": str(e)}
+        )
 
 # ====== SIMPLE CHAT ======
 @app.post("/api/chat-simple")
@@ -636,8 +657,8 @@ async def chat_simple(request: SimpleChatRequest):
     try:
         messages = [{"role": "user", "content": request.message}]
 
-        # Check if user is asking about products
-        product_keywords = ["product", "buy", "price", "dress", "shirt", "wallet", "kapra", "cheez", 
+        # Detect product intent
+        product_keywords = ["product", "buy", "price", "dress", "shirt", "wallet", "kapra", "cheez",
                            "suit", "clothes", "fashion", "len", "lena", "purchase", "dikhao", "show",
                            "lawn", "fabric", "perfume", "gift", "box", "wear", "unstitched", "dikhayo"]
         needs_products = any(kw in request.message.lower() for kw in product_keywords)
@@ -652,10 +673,8 @@ async def chat_simple(request: SimpleChatRequest):
 
         ai_response = await ai_service.chat_with_products(messages, products, force_products=needs_products and len(products) > 0)
 
-        # Check if AI wants to show products OR user asked for products
         tool_calls = ai_response.get("tool_calls")
         if (tool_calls and len(tool_calls) > 0) or needs_products:
-            # Ensure we have products to show
             if len(products) == 0:
                 products = MOCK_PRODUCTS[:6]
 
@@ -682,49 +701,6 @@ async def chat_simple(request: SimpleChatRequest):
         return JSONResponse(
             status_code=500,
             content={"success": False, "response": "Kuch galat ho gaya. Dobara try karein.", "error": str(e)}
-        )
-
-# ====== ADD TO CART ======
-@app.post("/api/cart/add")
-async def add_to_cart(request: AddToCartRequest):
-    try:
-        # Try Storefront cart first
-        result = await shopify.create_cart(request.variant_id, request.quantity)
-
-        if "error" not in result:
-            cart_data = result.get("data", {}).get("cartCreate", {})
-            cart = cart_data.get("cart", {})
-            if cart.get("checkoutUrl"):
-                return JSONResponse(content={
-                    "success": True,
-                    "cart_id": cart.get("id"),
-                    "checkout_url": cart.get("checkoutUrl"),
-                    "message": "Product cart mein add ho gaya! Checkout karein."
-                })
-
-        # Fallback: Direct checkout URL
-        # Extract handle or ID from variant_id
-        handle = ""
-        for p in MOCK_PRODUCTS:
-            if p["variant_id"] == request.variant_id:
-                handle = p["handle"]
-                break
-
-        checkout_url = f"https://{SHOPIFY_SHOP_DOMAIN}/cart/add?id={request.variant_id}&quantity={request.quantity}"
-        if handle:
-            checkout_url = f"https://{SHOPIFY_SHOP_DOMAIN}/products/{handle}"
-
-        return JSONResponse(content={
-            "success": True,
-            "checkout_url": checkout_url,
-            "message": "Product cart mein add ho gaya! Neeche diye gaye link se checkout karein."
-        })
-
-    except Exception as e:
-        print("Cart error:", str(e))
-        return JSONResponse(
-            status_code=500,
-            content={"success": False, "message": "Cart add failed", "error": str(e)}
         )
 
 # ====== FULL CHAT ======
@@ -777,22 +753,19 @@ async def chat_endpoint(request: ChatRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/products")
-async def get_products(request: ProductFetchRequest):
-    try:
-        products = await shopify.fetch_products(query=request.query, limit=request.limit)
-        return {"success": True, "products": products}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.post("/api/discount/generate")
 async def generate_discount(request: DiscountRequest):
     try:
-        discount = await shopify.create_discount_code(percentage=request.percentage, prefix="AI")
+        # Simple mock discount for now
+        code = f"REZON{uuid.uuid4().hex[:4].upper()}"
         return {
             "success": True,
-            "discount": discount,
-            "message": f"Aap ke liye {request.percentage}% discount code generate ho gaya hai!"
+            "discount": {
+                "code": code,
+                "percentage": request.percentage,
+                "expires_at": (datetime.utcnow() + timedelta(days=7)).isoformat()
+            },
+            "message": f"Aap ke liye {request.percentage}% discount code: {code}"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
