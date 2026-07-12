@@ -16,8 +16,6 @@ SHOPIFY_SHOP_DOMAIN = os.getenv("SHOPIFY_SHOP_DOMAIN", "your-store.myshopify.com
 SHOPIFY_ADMIN_API_TOKEN = os.getenv("SHOPIFY_ADMIN_API_TOKEN", "")
 SHOPIFY_STOREFRONT_ACCESS_TOKEN = os.getenv("SHOPIFY_STOREFRONT_ACCESS_TOKEN", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-SHOPIFY_CLIENT_ID = os.getenv("SHOPIFY_CLIENT_ID", "")
-SHOPIFY_CLIENT_SECRET = os.getenv("SHOPIFY_CLIENT_SECRET", "")
 
 SHOPIFY_SHOP_DOMAIN = SHOPIFY_SHOP_DOMAIN.rstrip('/')
 
@@ -31,7 +29,6 @@ print("=" * 60)
 
 app = FastAPI(title="REZON AI VTON Engine", version="4.0.0")
 
-# ============ CORS ============
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -72,7 +69,7 @@ CATEGORIES = [
     }
 ]
 
-# ============ MOCK PRODUCTS (Real Images) ============
+# ============ MOCK PRODUCTS ============
 MOCK_PRODUCTS = [
     {
         "id": "gid://shopify/Product/1",
@@ -172,41 +169,14 @@ MOCK_PRODUCTS = [
     }
 ]
 
-# ============ ROOT / HEALTH ============
-@app.get("/")
-async def root():
-    return {"message": "REZON AI VTON Engine Running", "version": "4.0.0", "status": "ok"}
-
-@app.get("/health")
-async def health():
-    return {"status": "healthy"}
-
 # ============ MODELS ============
 class ChatMessage(BaseModel):
     role: str
     content: str
-    product_cards: Optional[List[Dict]] = None
-    image_url: Optional[str] = None
-
-class ChatRequest(BaseModel):
-    messages: List[ChatMessage]
-    session_id: str
-    product_context: Optional[str] = None
 
 class SimpleChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = "default"
-
-class DiscountRequest(BaseModel):
-    percentage: float = 5.0
-    customer_email: Optional[str] = None
-    product_id: Optional[str] = None
-
-class VTONRequest(BaseModel):
-    user_image_url: str
-    product_image_url: str
-    product_id: str
-    session_id: str
 
 class ProductFetchRequest(BaseModel):
     query: Optional[str] = None
@@ -218,9 +188,6 @@ class AddToCartRequest(BaseModel):
     variant_id: str
     quantity: int = 1
 
-class CategoryRequest(BaseModel):
-    category_id: Optional[str] = None
-
 # ============ HTML STRIPPER ============
 def strip_html(html_text):
     if not html_text:
@@ -231,9 +198,8 @@ def strip_html(html_text):
 
 # ============ SHOPIFY CLIENT ============
 class ShopifyClient:
-    def __init__(self, shop_domain: str, admin_token: str, storefront_token: str):
+    def __init__(self, shop_domain, admin_token, storefront_token):
         self.shop_domain = shop_domain
-        self.admin_url = f"https://{shop_domain}/admin/api/2024-07/graphql.json"
         self.admin_rest_url = f"https://{shop_domain}/admin/api/2024-07"
         self.storefront_url = f"https://{shop_domain}/api/2024-07/graphql.json"
         self.admin_headers = {
@@ -255,8 +221,7 @@ class ShopifyClient:
             pass
         return 0
 
-    def _format_product(self, p: dict, category: str = None) -> dict:
-        """Format a product with all needed fields"""
+    def _format_product(self, p, category=None):
         variant = p["variants"][0] if p.get("variants") else {}
         image = p["images"][0] if p.get("images") else {}
 
@@ -267,7 +232,6 @@ class ShopifyClient:
         variant_id_num = variant.get("id")
         variant_id_gid = f"gid://shopify/ProductVariant/{variant_id_num}" if variant_id_num else None
 
-        # Determine category from tags/type
         tags = p.get("tags", [])
         product_type = p.get("product_type", "").lower()
         prod_category = category or "general"
@@ -297,89 +261,66 @@ class ShopifyClient:
             "discount_percent": discount,
             "product_type": p.get("product_type", ""),
             "vendor": p.get("vendor", ""),
-            "features": p.get("tags", [])[:4]  # Use tags as features fallback
+            "features": p.get("tags", [])[:4]
         }
 
-    async def fetch_products_admin_rest(self, query: str = None, category: str = None, limit: int = 10) -> List[Dict]:
-        """Fetch REAL products from Shopify using Admin REST API"""
+    async def fetch_products_admin_rest(self, query=None, category=None, limit=10):
         if not self.admin_headers["X-Shopify-Access-Token"]:
-            print("❌ ADMIN TOKEN NOT SET")
             return []
 
         url = f"{self.admin_rest_url}/products.json?limit={limit}&status=active"
         if query:
             url += f"&title={query}"
 
-        print(f"🔍 Fetching real products: {url}")
-
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(url, headers=self.admin_headers, timeout=15.0)
 
-            print(f"📡 Admin API Status: {response.status_code}")
-
             if response.status_code != 200:
-                print(f"❌ Admin API Error: {response.text[:200]}")
                 return []
 
             data = response.json()
             products = data.get("products", [])
 
             if not products:
-                print("⚠️ No products found in your Shopify store")
                 return []
 
             formatted = [self._format_product(p, category) for p in products]
 
-            # Filter by category if specified
             if category:
                 formatted = [p for p in formatted if p["category"] == category]
 
-            print(f"✅ Fetched {len(formatted)} REAL products!")
             return formatted
 
         except Exception as e:
-            print(f"❌ Admin REST API error: {e}")
+            print(f"Admin API error: {e}")
             return []
 
-    async def fetch_products(self, query: str = None, category: str = None, limit: int = 10) -> List[Dict]:
-        """Smart fetch: Try REAL store products first, fallback to mock"""
+    async def fetch_products(self, query=None, category=None, limit=10):
         if self.admin_headers["X-Shopify-Access-Token"]:
             products = await self.fetch_products_admin_rest(query, category, limit)
             if products:
                 return products
 
-        # Fallback to mock products
-        print("⚠️ Using MOCK products")
         products = MOCK_PRODUCTS
         if category:
             products = [p for p in products if p.get("category") == category]
         return products[:limit]
 
-    async def create_cart(self, variant_id: str, quantity: int = 1) -> Dict:
+    async def create_cart(self, variant_id, quantity=1):
         if not self.storefront_headers["X-Shopify-Storefront-Access-Token"]:
             return {"error": "No storefront token"}
 
         mutation = """
         mutation cartCreate($input: CartInput!) {
             cartCreate(input: $input) {
-                cart {
-                    id
-                    checkoutUrl
-                }
-                userErrors {
-                    field
-                    message
-                }
+                cart { id checkoutUrl }
+                userErrors { field message }
             }
         }
         """
 
-        variables = {
-            "input": {
-                "lines": [{"quantity": quantity, "merchandiseId": variant_id}]
-            }
-        }
+        variables = {"input": {"lines": [{"quantity": quantity, "merchandiseId": variant_id}]}}
 
         try:
             async with httpx.AsyncClient() as client:
@@ -391,19 +332,17 @@ class ShopifyClient:
                 )
                 return response.json()
         except Exception as e:
-            print(f"Error creating cart: {e}")
             return {"error": str(e)}
 
 shopify = ShopifyClient(SHOPIFY_SHOP_DOMAIN, SHOPIFY_ADMIN_API_TOKEN, SHOPIFY_STOREFRONT_ACCESS_TOKEN)
 
 # ============ AI SERVICE ============
 class AIService:
-    def __init__(self, api_key: str):
+    def __init__(self, api_key):
         self.api_key = api_key
         self.url = "https://api.openai.com/v1/chat/completions"
 
-    def _build_product_detail_prompt(self, product: Dict) -> str:
-        """Build rich product explanation prompt"""
+    def _build_product_detail_prompt(self, product):
         features = product.get("features", [])
         features_text = "\n".join([f"- {f}" for f in features]) if features else ""
 
@@ -421,13 +360,12 @@ Explain this product in Roman Urdu like a friendly salesman. Highlight:
 1. Fabric/material quality
 2. Best use cases (occasion, season)
 3. Why it's worth buying
-4. Discount value (if any)
+4. Discount value (if any) - EXCITEDLY mention!
 5. End with "Add to Cart karein?" and emojis
 
 Keep it under 150 words, exciting and persuasive."""
 
-    async def explain_product(self, product: Dict) -> str:
-        """Get AI explanation for a specific product"""
+    async def explain_product(self, product):
         prompt = self._build_product_detail_prompt(product)
 
         try:
@@ -456,8 +394,7 @@ Keep it under 150 words, exciting and persuasive."""
             print(f"AI explain error: {e}")
             return self._fallback_explanation(product)
 
-    def _fallback_explanation(self, product: Dict) -> str:
-        """Fallback explanation if AI fails"""
+    def _fallback_explanation(self, product):
         title = product.get("title", "")
         price = product.get("price", "")
         compare = product.get("compare_at_price", "")
@@ -476,10 +413,8 @@ Keep it under 150 words, exciting and persuasive."""
         msg += "Quality bohat zabardast hai. Add to Cart karein? 🛒"
         return msg
 
-    async def chat_with_products(self, messages: List[Dict], products: List[Dict] = None, force_products: bool = False) -> Dict:
-        system_prompt = """You are REZON AI, a premium fashion assistant for REZON store. 
-Speak in Roman Urdu (Hinglish) when customer uses it.
-Be friendly, concise, and helpful."""
+    async def chat_with_products(self, messages, products=None, force_products=False):
+        system_prompt = "You are REZON AI, a premium fashion assistant for REZON store. Speak in Roman Urdu (Hinglish). Be friendly, concise, and helpful."
 
         formatted_messages = [{"role": "system", "content": system_prompt}]
         for msg in messages:
@@ -487,23 +422,6 @@ Be friendly, concise, and helpful."""
                 formatted_messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
             else:
                 formatted_messages.append({"role": msg.role, "content": msg.content})
-
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "show_products",
-                    "description": "Show product cards to the user",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "message": {"type": "string", "description": "Message in Roman Urdu"}
-                        },
-                        "required": ["message"]
-                    }
-                }
-            }
-        ]
 
         try:
             async with httpx.AsyncClient() as client:
@@ -513,8 +431,6 @@ Be friendly, concise, and helpful."""
                     json={
                         "model": "gpt-4o-mini",
                         "messages": formatted_messages,
-                        "tools": tools,
-                        "tool_choice": "auto" if not force_products else {"type": "function", "function": {"name": "show_products"}},
                         "temperature": 0.7,
                         "max_tokens": 500
                     },
@@ -526,10 +442,7 @@ Be friendly, concise, and helpful."""
                 return {"text": "Sorry, AI service temporarily unavailable.", "tool_calls": None}
 
             message = result["choices"][0]["message"]
-            return {
-                "text": message.get("content", ""),
-                "tool_calls": message.get("tool_calls")
-            }
+            return {"text": message.get("content", ""), "tool_calls": message.get("tool_calls")}
 
         except Exception as e:
             print("OpenAI error:", str(e))
@@ -539,36 +452,25 @@ ai_service = AIService(OPENAI_API_KEY)
 
 # ============ API ROUTES ============
 
-# ====== GET CATEGORIES ======
+@app.get("/")
+async def root():
+    return {"message": "REZON AI VTON Engine Running", "version": "4.0.0", "status": "ok"}
+
 @app.get("/api/categories")
 async def get_categories():
-    return {
-        "success": True,
-        "categories": CATEGORIES
-    }
+    return {"success": True, "categories": CATEGORIES}
 
-# ====== GET PRODUCTS BY CATEGORY ======
 @app.post("/api/products")
 async def get_products(request: ProductFetchRequest):
     try:
-        products = await shopify.fetch_products(
-            query=request.query,
-            category=request.category,
-            limit=request.limit
-        )
-        return {
-            "success": True,
-            "products": products,
-            "category": request.category
-        }
+        products = await shopify.fetch_products(query=request.query, category=request.category, limit=request.limit)
+        return {"success": True, "products": products, "category": request.category}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ====== GET PRODUCT DETAIL (AI EXPLANATION) ======
 @app.post("/api/product/explain")
 async def explain_product_endpoint(request: ProductFetchRequest):
     try:
-        # Find product
         products = await shopify.fetch_products(limit=50)
         product = None
         for p in products:
@@ -577,7 +479,6 @@ async def explain_product_endpoint(request: ProductFetchRequest):
                 break
 
         if not product:
-            # Try mock products
             for p in MOCK_PRODUCTS:
                 if p["id"] == request.product_id or p["handle"] == request.product_id:
                     product = p
@@ -586,7 +487,6 @@ async def explain_product_endpoint(request: ProductFetchRequest):
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
 
-        # Get AI explanation
         explanation = await ai_service.explain_product(product)
 
         return {
@@ -599,11 +499,9 @@ async def explain_product_endpoint(request: ProductFetchRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ====== ADD TO CART ======
 @app.post("/api/cart/add")
 async def add_to_cart(request: AddToCartRequest):
     try:
-        # Try Storefront cart first
         result = await shopify.create_cart(request.variant_id, request.quantity)
 
         if "error" not in result:
@@ -618,22 +516,18 @@ async def add_to_cart(request: AddToCartRequest):
                     "action": "checkout"
                 })
 
-        # Fallback: Direct Shopify cart URL
+        # Fallback
         variant_id = request.variant_id
         if variant_id.startswith("gid://"):
             variant_id = variant_id.split("/")[-1]
 
-        # Find product handle
         handle = ""
         for p in MOCK_PRODUCTS:
             if p["variant_id"] == request.variant_id or p["numeric_variant_id"] == variant_id:
                 handle = p["handle"]
                 break
 
-        # Direct cart add URL (works on all Shopify stores!)
         cart_url = f"https://{SHOPIFY_SHOP_DOMAIN}/cart/add?id={variant_id}&quantity={request.quantity}"
-
-        # Alternative: Product page
         product_url = f"https://{SHOPIFY_SHOP_DOMAIN}/products/{handle}" if handle else cart_url
 
         return JSONResponse(content={
@@ -645,19 +539,13 @@ async def add_to_cart(request: AddToCartRequest):
         })
 
     except Exception as e:
-        print("Cart error:", str(e))
-        return JSONResponse(
-            status_code=500,
-            content={"success": False, "message": "Cart add failed", "error": str(e)}
-        )
+        return JSONResponse(status_code=500, content={"success": False, "message": "Cart add failed", "error": str(e)})
 
-# ====== SIMPLE CHAT ======
 @app.post("/api/chat-simple")
 async def chat_simple(request: SimpleChatRequest):
     try:
         messages = [{"role": "user", "content": request.message}]
 
-        # Detect product intent
         product_keywords = ["product", "buy", "price", "dress", "shirt", "wallet", "kapra", "cheez",
                            "suit", "clothes", "fashion", "len", "lena", "purchase", "dikhao", "show",
                            "lawn", "fabric", "perfume", "gift", "box", "wear", "unstitched", "dikhayo"]
@@ -668,66 +556,11 @@ async def chat_simple(request: SimpleChatRequest):
             try:
                 products = await shopify.fetch_products(limit=6)
             except Exception as e:
-                print("Product fetch error:", e)
                 products = MOCK_PRODUCTS[:6]
 
         ai_response = await ai_service.chat_with_products(messages, products, force_products=needs_products and len(products) > 0)
 
-        tool_calls = ai_response.get("tool_calls")
-        if (tool_calls and len(tool_calls) > 0) or needs_products:
-            if len(products) == 0:
-                products = MOCK_PRODUCTS[:6]
-
-            return JSONResponse(content={
-                "success": True,
-                "response": ai_response.get("text") or "Yeh hain hamare best products!",
-                "product_cards": products,
-                "quick_replies": ["Fabrics dekhein", "Wallets explore karein", "Perfumes check karein", "Discount code chahiye"],
-                "session_id": request.session_id
-            })
-
-        return JSONResponse(content={
-            "success": True,
-            "response": ai_response.get("text") or "Main aapki madad karne ke liye tayyar hoon!",
-            "product_cards": None,
-            "quick_replies": ["Products dekhein", "Styling tips chahiye", "Discount code"],
-            "session_id": request.session_id
-        })
-
-    except Exception as e:
-        print("Chat error:", str(e))
-        import traceback
-        traceback.print_exc()
-        return JSONResponse(
-            status_code=500,
-            content={"success": False, "response": "Kuch galat ho gaya. Dobara try karein.", "error": str(e)}
-        )
-
-# ====== FULL CHAT ======
-@app.post("/api/chat")
-async def chat_endpoint(request: ChatRequest):
-    try:
-        messages_dicts = []
-        for msg in request.messages:
-            messages_dicts.append({"role": msg.role, "content": msg.content})
-
-        product_keywords = ["product", "buy", "price", "dress", "shirt", "wallet", "kapra", "cheez",
-                           "suit", "clothes", "fashion", "len", "lena", "purchase", "dikhao", "show",
-                           "lawn", "fabric", "perfume", "gift", "box", "wear", "unstitched", "dikhayo"]
-        needs_products = any(kw in request.messages[-1].content.lower() for kw in product_keywords)
-
-        products = []
         if needs_products:
-            try:
-                products = await shopify.fetch_products(limit=6)
-            except Exception as e:
-                print("Product fetch error:", e)
-                products = MOCK_PRODUCTS[:6]
-
-        ai_response = await ai_service.chat_with_products(messages_dicts, products, force_products=needs_products and len(products) > 0)
-
-        tool_calls = ai_response.get("tool_calls")
-        if (tool_calls and len(tool_calls) > 0) or needs_products:
             if len(products) == 0:
                 products = MOCK_PRODUCTS[:6]
 
@@ -748,51 +581,7 @@ async def chat_endpoint(request: ChatRequest):
         })
 
     except Exception as e:
-        print("Chat error:", str(e))
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/discount/generate")
-async def generate_discount(request: DiscountRequest):
-    try:
-        # Simple mock discount for now
-        code = f"REZON{uuid.uuid4().hex[:4].upper()}"
-        return {
-            "success": True,
-            "discount": {
-                "code": code,
-                "percentage": request.percentage,
-                "expires_at": (datetime.utcnow() + timedelta(days=7)).isoformat()
-            },
-            "message": f"Aap ke liye {request.percentage}% discount code: {code}"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/vton/process")
-async def process_vton(request: VTONRequest):
-    return {"success": True, "status": "processing", "message": "VTON processing started"}
-
-@app.post("/api/upload/image")
-async def upload_image(file: UploadFile = File(...)):
-    try:
-        contents = await file.read()
-        file_id = f"{uuid.uuid4()}_{file.filename}"
-        upload_dir = "uploads"
-        os.makedirs(upload_dir, exist_ok=True)
-        file_path = os.path.join(upload_dir, file_id)
-
-        with open(file_path, "wb") as f:
-            f.write(contents)
-
-        return {
-            "success": True,
-            "url": f"/uploads/{file_id}",
-            "file_id": file_id
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(status_code=500, content={"success": False, "response": "Kuch galat ho gaya.", "error": str(e)})
 
 if __name__ == "__main__":
     import uvicorn
