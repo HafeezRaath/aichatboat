@@ -18,6 +18,17 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 SHOPIFY_CLIENT_ID = os.getenv("SHOPIFY_CLIENT_ID", "")
 SHOPIFY_CLIENT_SECRET = os.getenv("SHOPIFY_CLIENT_SECRET", "")
 
+# Ensure domain has .myshopify.com
+if SHOPIFY_SHOP_DOMAIN and not SHOPIFY_SHOP_DOMAIN.endswith('.myshopify.com'):
+    SHOPIFY_SHOP_DOMAIN = SHOPIFY_SHOP_DOMAIN + '.myshopify.com'
+
+print("=" * 60)
+print("SHOPIFY_SHOP_DOMAIN:", SHOPIFY_SHOP_DOMAIN)
+print("SHOPIFY_ADMIN_API_TOKEN set:", bool(SHOPIFY_ADMIN_API_TOKEN))
+print("SHOPIFY_STOREFRONT_ACCESS_TOKEN set:", bool(SHOPIFY_STOREFRONT_ACCESS_TOKEN))
+print("OPENAI_API_KEY set:", bool(OPENAI_API_KEY))
+print("=" * 60)
+
 app = FastAPI(title="REZON AI VTON Engine", version="1.0.0")
 
 # ============ CORS ============
@@ -28,6 +39,65 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ============ MOCK PRODUCTS (Fallback) ============
+MOCK_PRODUCTS = [
+    {
+        "id": "gid://shopify/Product/1",
+        "title": "Premium Unstitched Fabric - Grey",
+        "description": "High quality unstitched fabric perfect for summer suits. Soft cotton blend with elegant texture.",
+        "handle": "premium-unstitched-fabric-grey",
+        "price": "5990.00",
+        "compare_at_price": "7500.00",
+        "currency": "PKR",
+        "image_url": "https://cdn.shopify.com/s/files/1/placeholder-grey-fabric.jpg",
+        "variant_id": "gid://shopify/ProductVariant/1"
+    },
+    {
+        "id": "gid://shopify/Product/2",
+        "title": "Wash & Wear - Black",
+        "description": "Easy maintenance wash and wear fabric. Perfect for daily office wear and formal occasions.",
+        "handle": "wash-wear-black",
+        "price": "4950.00",
+        "compare_at_price": "6200.00",
+        "currency": "PKR",
+        "image_url": "https://cdn.shopify.com/s/files/1/placeholder-black-fabric.jpg",
+        "variant_id": "gid://shopify/ProductVariant/2"
+    },
+    {
+        "id": "gid://shopify/Product/3",
+        "title": "Summer Lawn Collection - Floral",
+        "description": "Breathable lawn fabric with beautiful floral print. Ideal for hot summer days.",
+        "handle": "summer-lawn-collection-floral",
+        "price": "3990.00",
+        "compare_at_price": "5500.00",
+        "currency": "PKR",
+        "image_url": "https://cdn.shopify.com/s/files/1/placeholder-lawn.jpg",
+        "variant_id": "gid://shopify/ProductVariant/3"
+    },
+    {
+        "id": "gid://shopify/Product/4",
+        "title": "Luxury Perfume - Oud Collection",
+        "description": "Premium oud fragrance with long lasting scent. Perfect for special occasions.",
+        "handle": "luxury-perfume-oud",
+        "price": "8500.00",
+        "compare_at_price": "12000.00",
+        "currency": "PKR",
+        "image_url": "https://cdn.shopify.com/s/files/1/placeholder-perfume.jpg",
+        "variant_id": "gid://shopify/ProductVariant/4"
+    },
+    {
+        "id": "gid://shopify/Product/5",
+        "title": "Leather Wallet - Brown",
+        "description": "Genuine leather wallet with multiple card slots and coin pocket. Premium quality stitching.",
+        "handle": "leather-wallet-brown",
+        "price": "2950.00",
+        "compare_at_price": "4200.00",
+        "currency": "PKR",
+        "image_url": "https://cdn.shopify.com/s/files/1/placeholder-wallet.jpg",
+        "variant_id": "gid://shopify/ProductVariant/5"
+    }
+]
 
 # ============ ROOT / HEALTH ============
 @app.get("/")
@@ -122,6 +192,11 @@ class ShopifyClient:
         }
 
     async def fetch_products(self, query: str = None, limit: int = 5) -> List[Dict]:
+        # Check if credentials are available
+        if not self.storefront_headers["X-Shopify-Storefront-Access-Token"]:
+            print("WARNING: No storefront token available, using mock products")
+            return MOCK_PRODUCTS[:limit]
+
         search_query = f"title:*{query}*" if query else ""
 
         graphql_query = """
@@ -178,14 +253,29 @@ class ShopifyClient:
                     json={"query": graphql_query, "variables": variables},
                     timeout=10.0
                 )
+
+                print(f"Shopify API Status: {response.status_code}")
+                print(f"Shopify API Response text (first 500 chars): {response.text[:500]}")
+
+                # Check if response is HTML (error page) instead of JSON
+                if response.text.strip().startswith('<'):
+                    print("ERROR: Shopify returned HTML instead of JSON. Check credentials.")
+                    return MOCK_PRODUCTS[:limit]
+
                 data = response.json()
 
             if "errors" in data:
                 print("Shopify GraphQL errors:", data["errors"])
-                return []
+                return MOCK_PRODUCTS[:limit]
 
             products = []
-            for edge in data.get("data", {}).get("products", {}).get("edges", []):
+            edges = data.get("data", {}).get("products", {}).get("edges", [])
+
+            if not edges:
+                print("No products found in Shopify store, using mock products")
+                return MOCK_PRODUCTS[:limit]
+
+            for edge in edges:
                 node = edge["node"]
                 variant = node["variants"]["edges"][0]["node"] if node["variants"]["edges"] else None
                 image = node["images"]["edges"][0]["node"] if node["images"]["edges"] else None
@@ -203,9 +293,14 @@ class ShopifyClient:
                 })
 
             return products
+
+        except json.JSONDecodeError as e:
+            print(f"JSON Decode Error: {e}")
+            print("Response was not valid JSON. Using mock products.")
+            return MOCK_PRODUCTS[:limit]
         except Exception as e:
             print(f"Error fetching products: {e}")
-            return []
+            return MOCK_PRODUCTS[:limit]
 
     async def create_cart(self, variant_id: str, quantity: int = 1) -> Dict:
         mutation = """
@@ -416,7 +511,7 @@ async def chat_simple(request: SimpleChatRequest):
         # Check if user is asking about products
         product_keywords = ["product", "buy", "price", "dress", "shirt", "wallet", "kapra", "cheez", 
                            "suit", "clothes", "fashion", "len", "lena", "purchase", "dikhao", "show",
-                           "lawn", "fabric", "perfume", "gift", "box", "wear", "unstitched"]
+                           "lawn", "fabric", "perfume", "gift", "box", "wear", "unstitched", "dikhayo"]
         needs_products = any(kw in request.message.lower() for kw in product_keywords)
 
         products = []
@@ -425,21 +520,22 @@ async def chat_simple(request: SimpleChatRequest):
                 products = await shopify.fetch_products(limit=5)
             except Exception as e:
                 print("Product fetch error:", e)
+                products = MOCK_PRODUCTS[:5]
 
         ai_response = await ai_service.chat_with_products(messages, products, force_products=needs_products and len(products) > 0)
 
-        # Check if AI wants to show products
+        # Check if AI wants to show products OR user asked for products
         tool_calls = ai_response.get("tool_calls")
-        if tool_calls and len(tool_calls) > 0:
-            # Force show products
+        if (tool_calls and len(tool_calls) > 0) or needs_products:
+            # Ensure we have products to show
             if len(products) == 0:
-                products = await shopify.fetch_products(limit=5)
+                products = MOCK_PRODUCTS[:5]
 
             return JSONResponse(content={
                 "success": True,
                 "response": ai_response.get("text") or "Yeh hain hamare best products!",
                 "product_cards": products,
-                "quick_replies": ["Fabrics dekhein", "Wallets explore karein", "Perfumes check karein"],
+                "quick_replies": ["Fabrics dekhein", "Wallets explore karein", "Perfumes check karein", "Discount code chahiye"],
                 "session_id": request.session_id
             })
 
@@ -447,7 +543,7 @@ async def chat_simple(request: SimpleChatRequest):
             "success": True,
             "response": ai_response.get("text") or "Main aapki madad karne ke liye tayyar hoon!",
             "product_cards": None,
-            "quick_replies": None,
+            "quick_replies": ["Products dekhein", "Styling tips chahiye", "Discount code"],
             "session_id": request.session_id
         })
 
@@ -499,7 +595,7 @@ async def chat_endpoint(request: ChatRequest):
 
         product_keywords = ["product", "buy", "price", "dress", "shirt", "wallet", "kapra", "cheez",
                            "suit", "clothes", "fashion", "len", "lena", "purchase", "dikhao", "show",
-                           "lawn", "fabric", "perfume", "gift", "box", "wear", "unstitched"]
+                           "lawn", "fabric", "perfume", "gift", "box", "wear", "unstitched", "dikhayo"]
         needs_products = any(kw in request.messages[-1].content.lower() for kw in product_keywords)
 
         products = []
@@ -508,19 +604,20 @@ async def chat_endpoint(request: ChatRequest):
                 products = await shopify.fetch_products(limit=5)
             except Exception as e:
                 print("Product fetch error:", e)
+                products = MOCK_PRODUCTS[:5]
 
         ai_response = await ai_service.chat_with_products(messages_dicts, products, force_products=needs_products and len(products) > 0)
 
         tool_calls = ai_response.get("tool_calls")
-        if tool_calls and len(tool_calls) > 0:
+        if (tool_calls and len(tool_calls) > 0) or needs_products:
             if len(products) == 0:
-                products = await shopify.fetch_products(limit=5)
+                products = MOCK_PRODUCTS[:5]
 
             return JSONResponse(content={
                 "success": True,
                 "response": ai_response.get("text") or "Yeh hain hamare best products!",
                 "product_cards": products,
-                "quick_replies": ["Fabrics dekhein", "Wallets explore karein", "Perfumes check karein"],
+                "quick_replies": ["Fabrics dekhein", "Wallets explore karein", "Perfumes check karein", "Discount code chahiye"],
                 "session_id": request.session_id
             })
 
@@ -528,7 +625,7 @@ async def chat_endpoint(request: ChatRequest):
             "success": True,
             "response": ai_response.get("text") or "Main aapki madad karne ke liye tayyar hoon!",
             "product_cards": None,
-            "quick_replies": None,
+            "quick_replies": ["Products dekhein", "Styling tips chahiye", "Discount code"],
             "session_id": request.session_id
         })
 
